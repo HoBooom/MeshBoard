@@ -54,13 +54,17 @@
       "area": "foundation",
       "title": "홈 대시보드 및 타겟팅 공지 시스템 (NOTICES)",
       "user_visible_behavior": "운영자가 대상 역할을 지정해 공지를 쓰면, 해당 역할을 가진 접속자의 화면에만 공지가 뜬다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
-        "1. POST /api/notices 로 대상 역할과 만료일(expires_at)이 포함된 공지 생성",
-        "2. 해당 역할로 로그인 후 GET /api/notices 로 공지 수신 확인",
-        "3. 만료일이 지난 공지가 자동으로 숨겨지는지 확인"
+        "✅ [2026-04-24] 1. POST /api/notices 로 대상 역할과 만료일(expires_at)이 포함된 공지 생성",
+        "✅ [2026-04-24] 2. 해당 역할로 로그인 후 GET /api/notices 로 공지 수신 확인",
+        "✅ [2026-04-24] 3. 만료일이 지난 공지가 자동으로 숨겨지는지 확인"
       ],
-      "evidence": [],
+      "evidence": [
+        "✅ [2026-04-24] 백엔드 /api/v1/notices API 구현 및 라우터 등록 완료",
+        "✅ [2026-04-24] 프론트엔드 DashboardPage에 design.md 기반 Apple 디자인 시스템 토큰(font-apple, bg-apple-surface1 등) 적용",
+        "✅ [2026-04-24] 시드 공지 3개(전체공지, 운영자 전용, 만료) 생성 후 DashboardPage UI 정상 렌더링 확인"
+      ],
       "notes": "단순 UI가 아닌 DB 기반 타겟팅 및 만료 로직 적용."
     },
     {

@@ -4,8 +4,9 @@
  * 역할에 따라 다른 위젯/카드를 표시하는 홈 대시보드.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
+import { noticesApi, Notice } from '../api/notices';
 
 const roleLabels: Record<string, string> = {
   agent_owner: '에이전트 소유자',
@@ -37,9 +38,14 @@ interface StatCard {
 
 export default function DashboardPage() {
   const { user, fetchUser } = useAuthStore();
+  const [notices, setNotices] = useState<Notice[]>([]);
 
   useEffect(() => {
-    if (!user) fetchUser();
+    if (!user) {
+      fetchUser();
+    } else {
+      noticesApi.getNotices().then(setNotices).catch(console.error);
+    }
   }, [user, fetchUser]);
 
   // 역할별 통계 카드 (초기에는 Mock 데이터)
@@ -92,17 +98,17 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8 animate-fade-in">
-      {/* Welcome Header */}
-      <div className="flex items-start justify-between">
+      {/* Welcome Header - Apple Style */}
+      <div className="flex flex-col md:flex-row md:items-end justify-between font-apple pb-8 border-b border-surface-800">
         <div>
-          <h1 className="text-3xl font-bold text-white mb-2">
-            안녕하세요, {user?.name ?? '...'}님! 👋
+          <h1 className="text-[40px] md:text-[56px] font-semibold text-white tracking-[-0.28px] leading-[1.07] mb-2">
+            안녕하세요, {user?.name ?? '...'}님.
           </h1>
-          <p className="text-surface-400">
+          <p className="text-[21px] font-normal text-white/80 tracking-[0.231px] leading-[1.19]">
             MeshBoard 대시보드에 오신 것을 환영합니다.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 mt-4 md:mt-0">
           {user?.roles.map((role) => (
             <span
               key={role}
@@ -115,6 +121,34 @@ export default function DashboardPage() {
           ))}
         </div>
       </div>
+
+      {/* Notices Section - Apple Style */}
+      {notices.length > 0 && (
+        <div className="font-apple space-y-4 mb-12">
+          {notices.map((notice) => (
+            <div key={notice.notice_id} className="bg-apple-surface1 rounded-[12px] p-6 text-white shadow-[0_5px_30px_rgba(0,0,0,0.22)]">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-[21px] font-semibold tracking-[0.231px] leading-[1.19]">
+                  {notice.title}
+                </h3>
+                <span className="text-[12px] font-medium text-white/50 tracking-[-0.12px]">
+                  {new Date(notice.created_at).toLocaleDateString('ko-KR')}
+                </span>
+              </div>
+              {notice.body && (
+                <p className="text-[17px] font-normal text-white/80 tracking-[-0.374px] leading-[1.47] mt-3">
+                  {notice.body}
+                </p>
+              )}
+              <div className="mt-5">
+                <a href="#" className="inline-flex items-center text-[14px] text-apple-link hover:underline tracking-[-0.224px]">
+                  자세히 알아보기 <span className="ml-1 text-[10px]">❯</span>
+                </a>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">

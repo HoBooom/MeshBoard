@@ -7,6 +7,14 @@ export default {
   theme: {
     extend: {
       colors: {
+        apple: {
+          blue: '#0071e3',
+          dark: '#000000',
+          surface1: '#272729',
+          surface2: '#2a2a2d',
+          gray: '#f5f5f7',
+          link: '#2997ff',
+        },
         primary: {
           50: '#eef2ff',
           100: '#e0e7ff',
@@ -36,6 +44,7 @@ export default {
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        apple: ['"SF Pro Display"', '"SF Pro Text"', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
       },
       animation: {
         'fade-in': 'fadeIn 0.5s ease-out',

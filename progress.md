@@ -5,7 +5,7 @@
 - **Repository root**: `/Users/hobongs/Desktop/HoBong_study/26-1/meshboard`
 - **Standard startup path**: `./init.sh` (또는 수동: docker compose up -d → alembic upgrade head → uvicorn)
 - **Standard verification path**: `curl http://localhost:8000/health`
-- **Current highest-priority unfinished feature**: `PH1-dash-001` (priority 3 — 홈 대시보드 및 타겟팅 공지 시스템)
+- **Current highest-priority unfinished feature**: `PH2-market-001` (priority 4 — 자연어 기반 에이전트 마켓플레이스 검색)
 - **Current blocker**: 없음
 
 ---
@@ -88,4 +88,28 @@
   - `backend/alembic/versions/bd44babbb822_create_registry_tables.py`
   - `progress.md`, `feature_list.json`, `clean-state-checklist.md`
 - **Known risk or unresolved issue**: 없음
-- **Next best step**: `PH1-dash-001` — 홈 대시보드 및 타겟팅 공지 시스템 구현
+- **Next best step**: `PH2-market-001` — 자연어 기반 에이전트 마켓플레이스 검색
+
+### Session 003
+- **Date**: 2026-04-24
+- **Goal**: PH1-dash-001 — 홈 대시보드 및 타겟팅 공지 시스템 (NOTICES) 구현
+- **Completed**:
+  - `app/schemas/notice.py` 및 `app/api/v1/notices.py` 생성
+  - 공지사항 생성(POST) 및 권한/만료일에 따른 조회(GET) 로직 구현
+  - 프론트엔드 `tailwind.config.js`에 Apple 디자인 토큰(`apple-blue`, `apple-surface1` 등) 추가
+  - `DashboardPage.tsx` 상단 Welcome 영역 및 Notices 카드에 Apple-style 디자인(`SF Pro` 기반 `font-apple`, 타이트한 행간/자간, 블랙 베이스) 적용
+  - 테스트용 시드 스크립트로 3개 공지(전체, 운영자, 만료됨) 생성 완료
+- **Verification run**:
+  - ✅ 시드 스크립트로 공지 데이터 삽입 성공
+  - ✅ 프론트엔드에서 공지사항 UI 정상 렌더링 확인 (타겟팅/만료 필터링)
+- **Evidence captured**:
+  - Dashboard UI에 Apple 스타일의 Notice 컴포넌트 추가됨
+- **Commits**: `feat(PH1-dash-001): 공지사항 API 구현 및 대시보드 Apple-style 디자인 연동`
+- **Files or artifacts updated**:
+  - `backend/app/schemas/notice.py`, `backend/app/api/v1/notices.py`, `backend/app/main.py`
+  - `frontend/src/api/notices.ts`
+  - `frontend/tailwind.config.js`
+  - `frontend/src/pages/DashboardPage.tsx`
+  - `progress.md`, `feature_list.json`, `clean-state-checklist.md`
+- **Known risk or unresolved issue**: 없음
+- **Next best step**: `PH2-market-001` — 자연어 기반 에이전트 마켓플레이스 검색 구현
