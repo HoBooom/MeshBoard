@@ -12,7 +12,7 @@ from app.db.session import get_db
 from app.models.notice import Notice
 from app.schemas.notice import NoticeCreate, NoticeRead
 from app.core.security import get_current_user
-from app.schemas.auth import UserRead
+from app.schemas.auth import UserResponse
 from app.core.rbac import RequireRoles
 
 router = APIRouter(prefix="/notices", tags=["notices"])
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/notices", tags=["notices"])
 async def create_notice(
     notice_in: NoticeCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: UserRead = Depends(RequireRoles(["admin", "governance", "trust_ops", "release_manager"]))
+    current_user: UserResponse = Depends(RequireRoles("admin", "governance", "trust_ops", "release_manager"))
 ):
     """
     공지사항 생성 (관리자/거버넌스/운영자/릴리스관리자 권한 필요).
@@ -42,7 +42,7 @@ async def create_notice(
 @router.get("/", response_model=List[NoticeRead])
 async def get_notices(
     db: AsyncSession = Depends(get_db),
-    current_user: UserRead = Depends(get_current_user)
+    current_user: UserResponse = Depends(get_current_user)
 ):
     """
     현재 로그인한 사용자에게 해당하는 유효한 공지사항 목록 조회.
