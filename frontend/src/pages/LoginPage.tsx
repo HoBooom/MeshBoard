@@ -38,37 +38,28 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-surface-950 flex mesh-bg">
+    <div className="min-h-screen bg-apple-dark flex font-apple text-white">
       {/* Left: Branding Panel */}
       <div className="hidden lg:flex lg:w-1/2 xl:w-3/5 flex-col justify-between p-12 relative overflow-hidden">
-        {/* Background decorations */}
-        <div className="absolute inset-0">
-          <div className="absolute top-20 left-20 w-72 h-72 bg-primary-500/10 rounded-full blur-3xl animate-pulse" />
-          <div className="absolute bottom-20 right-20 w-96 h-96 bg-purple-500/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
-          <div className="absolute top-1/2 left-1/3 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
-        </div>
 
         <div className="relative z-10">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-purple-600 flex items-center justify-center">
+            <div className="w-12 h-12 rounded-[12px] bg-apple-surface1 flex items-center justify-center">
               <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
               </svg>
             </div>
-            <span className="text-2xl font-bold text-white tracking-tight">MeshBoard</span>
+            <span className="text-[21px] font-semibold text-white tracking-[0.231px]">MeshBoard</span>
           </div>
         </div>
 
-        <div className="relative z-10 max-w-lg">
-          <h1 className="text-4xl xl:text-5xl font-extrabold text-white leading-tight mb-6">
+        <div className="relative z-10 max-w-lg mt-24">
+          <h1 className="text-[56px] font-semibold text-white leading-[1.07] tracking-[-0.28px] mb-6">
             AI 에이전트 메시를<br />
-            <span className="bg-gradient-to-r from-primary-400 to-purple-400 bg-clip-text text-transparent">
-              하나의 대시보드
-            </span>
-            에서<br />
-            관리하세요
+            하나의 대시보드에서<br />
+            관리하세요.
           </h1>
-          <p className="text-lg text-surface-300 leading-relaxed">
+          <p className="text-[21px] font-normal text-white/80 leading-[1.19] tracking-[0.231px]">
             수천 개의 헤드리스 AI 에이전트를 발견, 관리, 운영하는 통합 플랫폼.
             투명한 의사결정 추적과 역할 기반 거버넌스를 제공합니다.
           </p>
@@ -81,31 +72,31 @@ export default function LoginPage() {
             { label: 'A2A 통신 추적', value: 'Trace' },
             { label: '실시간 모니터링', value: 'Live' },
           ].map((item) => (
-            <div key={item.value} className="glass-card px-5 py-3">
-              <p className="text-xs text-surface-400">{item.label}</p>
-              <p className="text-lg font-bold text-primary-400">{item.value}</p>
+            <div key={item.value} className="bg-apple-surface1 rounded-[12px] px-5 py-3 shadow-[0_5px_30px_rgba(0,0,0,0.22)]">
+              <p className="text-[12px] text-white/50 tracking-[-0.12px]">{item.label}</p>
+              <p className="text-[17px] font-semibold text-white tracking-[-0.374px]">{item.value}</p>
             </div>
           ))}
         </div>
       </div>
 
       {/* Right: Login Form */}
-      <div className="flex-1 flex items-center justify-center p-8">
+      <div className="flex-1 flex items-center justify-center p-8 bg-apple-dark">
         <div className="w-full max-w-md animate-slide-up">
           {/* Mobile logo */}
           <div className="lg:hidden flex items-center gap-3 mb-10">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-purple-600 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-[12px] bg-apple-surface1 flex items-center justify-center">
               <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
               </svg>
             </div>
-            <span className="text-xl font-bold text-white">MeshBoard</span>
+            <span className="text-[21px] font-semibold text-white tracking-[0.231px]">MeshBoard</span>
           </div>
 
-          <div className="glass-card p-8 xl:p-10">
+          <div className="bg-apple-surface1 rounded-[12px] p-8 xl:p-10 shadow-[0_5px_30px_rgba(0,0,0,0.22)]">
             <div className="mb-8">
-              <h2 className="text-2xl font-bold text-white mb-2">로그인</h2>
-              <p className="text-surface-400">MeshBoard 계정으로 로그인하세요</p>
+              <h2 className="text-[28px] font-semibold text-white mb-2 tracking-[0.196px] leading-[1.14]">로그인</h2>
+              <p className="text-[14px] text-white/50 tracking-[-0.224px] leading-[1.43]">MeshBoard 계정으로 로그인하세요</p>
             </div>
 
             {/* Error message */}
@@ -120,7 +111,7 @@ export default function LoginPage() {
 
             <form onSubmit={handleSubmit} className="space-y-5">
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-surface-300 mb-2">
+                <label htmlFor="email" className="block text-[14px] font-medium text-white/80 tracking-[-0.224px] mb-2">
                   이메일
                 </label>
                 <input
@@ -136,7 +127,7 @@ export default function LoginPage() {
               </div>
 
               <div>
-                <label htmlFor="password" className="block text-sm font-medium text-surface-300 mb-2">
+                <label htmlFor="password" className="block text-[14px] font-medium text-white/80 tracking-[-0.224px] mb-2">
                   비밀번호
                 </label>
                 <div className="relative">
@@ -188,8 +179,8 @@ export default function LoginPage() {
             </form>
 
             {/* Demo accounts */}
-            <div className="mt-8 pt-6 border-t border-surface-700/50">
-              <p className="text-xs text-surface-500 mb-3">데모 계정</p>
+            <div className="mt-8 pt-6 border-t border-white/10">
+              <p className="text-[12px] text-white/50 tracking-[-0.12px] mb-3">데모 계정</p>
               <div className="grid grid-cols-2 gap-2">
                 {[
                   { label: '관리자', email: 'admin@meshboard.io', pw: 'admin1234' },
@@ -204,7 +195,7 @@ export default function LoginPage() {
                       setEmail(demo.email);
                       setPassword(demo.pw);
                     }}
-                    className="text-xs py-2 px-3 rounded-lg bg-surface-800/50 text-surface-400 hover:text-primary-400 hover:bg-surface-700/50 transition-all border border-surface-700/30"
+                    className="text-[12px] font-medium tracking-[-0.12px] py-[8px] px-[12px] rounded-[8px] bg-apple-surface2 text-white/80 hover:bg-white/10 hover:text-white transition-all"
                   >
                     {demo.label}
                   </button>

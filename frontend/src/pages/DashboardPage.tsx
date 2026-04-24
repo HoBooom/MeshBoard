@@ -155,27 +155,27 @@ export default function DashboardPage() {
         {statsCards.map((card, index) => (
           <div
             key={card.label}
-            className="glass-card-hover p-6"
+            className="glass-card p-6"
             style={{ animationDelay: `${index * 100}ms` }}
           >
             <div className="flex items-start justify-between mb-4">
-              <div className="w-12 h-12 rounded-xl bg-primary-500/10 flex items-center justify-center text-primary-400">
+              <div className="w-12 h-12 rounded-[12px] bg-apple-surface2 flex items-center justify-center text-apple-blue">
                 {card.icon}
               </div>
             </div>
-            <p className="text-2xl font-bold text-white mb-1">{card.value}</p>
-            <p className="text-sm text-surface-400">{card.label}</p>
-            <p className="text-xs text-surface-500 mt-2">{card.change}</p>
+            <p className="text-[28px] font-semibold text-white mb-1 tracking-[0.196px] leading-[1.14]">{card.value}</p>
+            <p className="text-[14px] text-white/50 tracking-[-0.224px]">{card.label}</p>
+            <p className="text-[12px] text-white/30 mt-2 tracking-[-0.12px]">{card.change}</p>
           </div>
         ))}
       </div>
 
       {/* Quick Actions based on role */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
         {/* System Status */}
         <div className="glass-card p-6">
-          <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+          <h3 className="text-[21px] font-semibold text-white mb-4 flex items-center gap-2 tracking-[0.231px]">
+            <div className="w-2 h-2 rounded-[50%] bg-[#34c759] animate-pulse" />
             시스템 상태
           </h3>
           <div className="space-y-3">
@@ -185,14 +185,14 @@ export default function DashboardPage() {
               { name: '메시지 브로커', status: 'pending', detail: 'Phase 3에서 구현 예정' },
               { name: 'Agent Runtime', status: 'pending', detail: 'Phase 3에서 구현 예정' },
             ].map((service) => (
-              <div key={service.name} className="flex items-center justify-between py-2 border-b border-surface-800/50 last:border-0">
+              <div key={service.name} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
                 <div className="flex items-center gap-3">
-                  <div className={`w-2 h-2 rounded-full ${
-                    service.status === 'online' ? 'bg-green-400' : 'bg-surface-500'
+                  <div className={`w-2 h-2 rounded-[50%] ${
+                    service.status === 'online' ? 'bg-[#34c759]' : 'bg-white/20'
                   }`} />
-                  <span className="text-sm text-surface-200">{service.name}</span>
+                  <span className="text-[14px] font-medium text-white/80 tracking-[-0.224px]">{service.name}</span>
                 </div>
-                <span className="text-xs text-surface-400">{service.detail}</span>
+                <span className="text-[12px] text-white/50 tracking-[-0.12px]">{service.detail}</span>
               </div>
             ))}
           </div>
@@ -200,36 +200,36 @@ export default function DashboardPage() {
 
         {/* User Info Card */}
         <div className="glass-card p-6">
-          <h3 className="text-lg font-semibold text-white mb-4">내 정보</h3>
+          <h3 className="text-[21px] font-semibold text-white tracking-[0.231px] mb-4">내 정보</h3>
           {user && (
             <div className="space-y-4">
               <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-purple-600 flex items-center justify-center">
-                  <span className="text-2xl font-bold text-white">{user.name.charAt(0)}</span>
+                <div className="w-16 h-16 rounded-[12px] bg-apple-surface2 flex items-center justify-center">
+                  <span className="text-[28px] font-semibold text-white tracking-[0.196px] leading-[1.14]">{user.name.charAt(0)}</span>
                 </div>
                 <div>
-                  <p className="text-lg font-semibold text-white">{user.name}</p>
-                  <p className="text-sm text-surface-400">{user.email}</p>
+                  <p className="text-[21px] font-semibold text-white tracking-[0.231px] leading-[1.19]">{user.name}</p>
+                  <p className="text-[14px] text-white/50 tracking-[-0.224px] mt-1">{user.email}</p>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3 pt-4 border-t border-surface-800/50">
+              <div className="grid grid-cols-2 gap-4 pt-4 border-t border-white/5">
                 <div>
-                  <p className="text-xs text-surface-500">로그인 ID</p>
-                  <p className="text-sm text-surface-200 font-medium">{user.login_id}</p>
+                  <p className="text-[12px] text-white/50 tracking-[-0.12px]">로그인 ID</p>
+                  <p className="text-[14px] font-medium text-white/80 tracking-[-0.224px] mt-1">{user.login_id}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-surface-500">계정 상태</p>
-                  <p className="text-sm text-green-400 font-medium">{user.state}</p>
+                  <p className="text-[12px] text-white/50 tracking-[-0.12px]">계정 상태</p>
+                  <p className="text-[14px] font-medium text-[#34c759] tracking-[-0.224px] mt-1">{user.state}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-surface-500">가입일</p>
-                  <p className="text-sm text-surface-200 font-medium">
+                  <p className="text-[12px] text-white/50 tracking-[-0.12px]">가입일</p>
+                  <p className="text-[14px] font-medium text-white/80 tracking-[-0.224px] mt-1">
                     {new Date(user.created_at).toLocaleDateString('ko-KR')}
                   </p>
                 </div>
                 <div>
-                  <p className="text-xs text-surface-500">마지막 로그인</p>
-                  <p className="text-sm text-surface-200 font-medium">
+                  <p className="text-[12px] text-white/50 tracking-[-0.12px]">마지막 로그인</p>
+                  <p className="text-[14px] font-medium text-white/80 tracking-[-0.224px] mt-1">
                     {user.last_login ? new Date(user.last_login).toLocaleString('ko-KR') : '—'}
                   </p>
                 </div>
@@ -240,14 +240,14 @@ export default function DashboardPage() {
       </div>
 
       {/* Coming Soon */}
-      <div className="glass-card p-8 text-center">
-        <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-primary-500/10 flex items-center justify-center">
-          <svg className="w-8 h-8 text-primary-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="glass-card p-10 text-center mt-8">
+        <div className="w-16 h-16 mx-auto mb-4 rounded-[12px] bg-apple-surface2 flex items-center justify-center">
+          <svg className="w-8 h-8 text-apple-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
         </div>
-        <h3 className="text-xl font-bold text-white mb-2">더 많은 기능이 곧 추가됩니다</h3>
-        <p className="text-surface-400 max-w-lg mx-auto">
+        <h3 className="text-[21px] font-semibold text-white tracking-[0.231px] mb-2">더 많은 기능이 곧 추가됩니다</h3>
+        <p className="text-[17px] font-normal text-white/50 tracking-[-0.374px] leading-[1.47] max-w-lg mx-auto">
           공지 시스템, 마켓플레이스, 에이전트 크리에이터, 토폴로지 맵 등
           다양한 기능이 Phase별로 구현될 예정입니다.
         </p>
