@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design System Tokens ─────────────────────────────────── */
+:root {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  --gradient-dark: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+  --gradient-card: linear-gradient(145deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+  --glass-bg: rgba(15, 23, 42, 0.8);
+  --glass-border: rgba(148, 163, 184, 0.1);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+
+/* ── Base Styles ──────────────────────────────────────────── */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── Glassmorphism Utilities ──────────────────────────────── */
+@layer components {
+  .glass-card {
+    @apply bg-surface-800/80 backdrop-blur-xl border border-surface-700/50 rounded-2xl shadow-xl;
+  }
+
+  .glass-card-hover {
+    @apply glass-card transition-all duration-300 hover:border-primary-500/30 hover:shadow-primary-500/10 hover:shadow-2xl;
+  }
+
+  .btn-primary {
+    @apply bg-gradient-to-r from-primary-600 to-primary-500 text-white font-semibold py-3 px-6 rounded-xl 
+           transition-all duration-300 hover:from-primary-500 hover:to-primary-400 
+           hover:shadow-lg hover:shadow-primary-500/25 active:scale-[0.98]
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:shadow-none;
+  }
+
+  .btn-secondary {
+    @apply bg-surface-700/50 text-surface-200 font-medium py-3 px-6 rounded-xl border border-surface-600/50
+           transition-all duration-300 hover:bg-surface-600/50 hover:border-surface-500/50
+           active:scale-[0.98];
+  }
+
+  .input-field {
+    @apply w-full bg-surface-800/50 border border-surface-600/50 rounded-xl px-4 py-3 text-white 
+           placeholder-surface-400 focus:outline-none focus:border-primary-500/50 focus:ring-2 
+           focus:ring-primary-500/20 transition-all duration-300;
+  }
+
+  .sidebar-item {
+    @apply flex items-center gap-3 px-4 py-3 rounded-xl text-surface-300 
+           transition-all duration-200 hover:bg-surface-700/50 hover:text-white cursor-pointer;
+  }
+
+  .sidebar-item-active {
+    @apply sidebar-item bg-primary-600/20 text-primary-300 border-l-2 border-primary-500;
+  }
+}
+
+/* ── Scrollbar ────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-surface-600 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-surface-500;
+}
+
+/* ── Mesh Background Pattern ──────────────────────────────── */
+.mesh-bg {
+  background-image: 
+    radial-gradient(at 40% 20%, hsla(228, 95%, 60%, 0.08) 0px, transparent 50%),
+    radial-gradient(at 80% 0%, hsla(265, 70%, 50%, 0.08) 0px, transparent 50%),
+    radial-gradient(at 0% 50%, hsla(199, 95%, 50%, 0.06) 0px, transparent 50%),
+    radial-gradient(at 80% 50%, hsla(328, 80%, 50%, 0.06) 0px, transparent 50%),
+    radial-gradient(at 0% 100%, hsla(228, 95%, 60%, 0.05) 0px, transparent 50%);
+}

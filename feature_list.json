@@ -1,6 +1,6 @@
 {
     "project": "MeshBoard",
-    "last_updated": "2026-04-13",
+    "last_updated": "2026-04-24",
     "rules": {
       "single_active_feature": true,
       "passing_requires_evidence": true,
@@ -19,14 +19,21 @@
         "area": "foundation",
         "title": "기업 IdP 연동 및 RBAC 기반 로그인",
         "user_visible_behavior": "사용자가 기업 계정으로 로그인하면 일반사용자/개발자/운영자/거버넌스팀 역할에 맞는 홈 대시보드로 리다이렉트 된다.",
-        "status": "not_started",
+        "status": "passing",
         "verification": [
           "1. 테스트용 OAuth2 모킹 서버를 실행한다.",
           "2. 운영자 계정으로 /auth/login 호출 후 발급된 JWT 토큰 내 역할(role)을 확인한다.",
           "3. 권한이 없는 API 호출 시 403 Forbidden 에러가 발생하는지 확인한다."
         ],
-        "evidence": [],
-        "notes": "USERS, USER_ROLES 테이블 마이그레이션 필수. OIDC 추상화 레이어 적용."
+        "evidence": [
+          "✅ [2026-04-24] uv run alembic upgrade head → users, user_roles 테이블 생성 완료",
+          "✅ [2026-04-24] POST /api/v1/auth/login (admin@meshboard.io) → JWT payload roles: [\"governance\",\"trust_ops\"] 확인",
+          "✅ [2026-04-24] GET /api/v1/auth/admin-only with evaluator token → 403 {\"detail\":\"이 작업에는 다음 역할 중 하나가 필요합니다: governance, trust_ops\"}",
+          "✅ [2026-04-24] GET /api/v1/auth/admin-only with admin token → 200 OK",
+          "✅ [2026-04-24] 시드 데이터 4명 (admin/dev/ops/user) 생성 완료",
+          "✅ [2026-04-24] Frontend 프로젝트 (Vite+React+Tailwind) + LoginPage + DashboardLayout 구현 완료"
+        ],
+        "notes": "USERS, USER_ROLES 테이블 마이그레이션 완료. OIDC 추상화 레이어(MockOIDCProvider) 적용. passlib+bcrypt 4.x 고정 필요 (bcrypt 5.x 비호환)."
       },
       {
         "id": "PH1-db-001",
@@ -74,8 +81,23 @@
         "notes": "pgvector를 활용한 시맨틱 검색 또는 LLM 쿼리 파서 도입 고려."
       },
       {
-        "id": "PH3-mesh-001",
+        "id": "PH3-creator-001",
         "priority": 5,
+        "area": "creator_wb",
+        "title": "에이전트 메타데이터 등록 및 구독 편집기",
+        "user_visible_behavior": "크리에이터가 에이전트의 자질(도구, 프롬프트)을 등록하고, 어떤 이벤트를 수신할지(구독 규칙) UI에서 설정한다.",
+        "status": "not_started",
+        "verification": [
+          "1. 크리에이터가 ui를 통해 에이전트 정보를 등록할 수 있는지 확인(Google Agent Development kit를 통한 에이전트 및 도구(MCP) 관리)",
+          "2. 에이전트 정보를 등록하면, AGENTS 및 AGENT_SUBSCRIPTION_RULES 테이블에 정상적으로 저장되는지 확인",
+          "3. 실제 에이전트가 LLM API를 통해 메시지를 수신하고 도구(MCP)사용 및 처리하는지 확인"
+        ],
+        "evidence": [],
+        "notes": "초기 상태는 status='draft'로 저장됨."
+      },
+      {
+        "id": "PH3-mesh-001",
+        "priority": 6,
         "area": "routing",
         "title": "Agent-Mesh 메시지 발행 브로커 (A2A 통신)",
         "user_visible_behavior": "에이전트 또는 사용자가 시스템에 이벤트를 발행할 수 있다.",
@@ -89,7 +111,7 @@
       },
       {
         "id": "PH3-mesh-002",
-        "priority": 6,
+        "priority": 7,
         "area": "routing",
         "title": "에이전트 구독 규칙 및 라우팅 엔진",
         "user_visible_behavior": "발행된 메시지가 워크스페이스의 메시지 큐에 등록되고, 조건에 맞는 에이전트들(메시지 내용을 구독한)이 해당 메시지를 수신하여 처리한다.",
@@ -104,10 +126,10 @@
       },
       {
         "id": "PH3-ui-consumer-001",
-        "priority": 7,
+        "priority": 8,
         "area": "consumer_wb",
-        "title": "상황 인식 기반(Context-aware) 공장 토폴로지 맵",
-        "user_visible_behavior": "사용자는 물리적/논리적 공장 라인과 그 위에서 모니터링 중인 에이전트들의 활성 상태를 맵 형태로 시각적으로 확인한다.",
+        "title": "상황 인식 기반(Context-aware) 토폴로지 맵",
+        "user_visible_behavior": "사용자는 주어진 상황(현재 워크스페이스)을 모니터링 중인 에이전트들의 활성 상태를 맵 형태로 시각적으로 확인한다.",
         "status": "not_started",
         "verification": [
           "1. 프론트엔드 React Flow/D3.js 맵 컴포넌트 마운트 확인",
@@ -118,7 +140,7 @@
       },
       {
         "id": "PH3-ui-consumer-002",
-        "priority": 8,
+        "priority": 9,
         "area": "consumer_wb",
         "title": "공유 워크스페이스 및 목표(Goal) 오케스트레이션",
         "user_visible_behavior": "여러 에이전트가 단일 목표를 위해 대화하고 작업하는 과정을 하나의 워크스페이스에서 실시간으로 관찰하고 개입할 수 있다.",
@@ -129,20 +151,6 @@
         ],
         "evidence": [],
         "notes": "WebSocket 또는 SSE를 통한 실시간 피드 업데이트 필수."
-      },
-      {
-        "id": "PH3-ui-creator-001",
-        "priority": 9,
-        "area": "creator_wb",
-        "title": "에이전트 메타데이터 등록 및 구독 편집기",
-        "user_visible_behavior": "크리에이터가 에이전트의 자질(도구, 프롬프트)을 등록하고, 어떤 공장 이벤트를 수신할지(구독 규칙) UI에서 설정한다.",
-        "status": "not_started",
-        "verification": [
-          "1. 크리에이터 워크벤치 폼을 통해 에이전트 정보 및 수신 규칙 제출",
-          "2. AGENTS 및 AGENT_SUBSCRIPTION_RULES 테이블 연동 저장 확인"
-        ],
-        "evidence": [],
-        "notes": "초기 상태는 status='draft'로 저장됨."
       },
       {
         "id": "PH3-ui-creator-002",
