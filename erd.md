@@ -1,0 +1,16 @@
+-- =============================================================================
+-- Agent Mesh Platform — Full Registry Schema
+-- Version: 2.0
+-- Updated: 2026-03-21
+--
+-- 테이블 목록 (17개)
+--   사용자/권한   : users, user_roles
+--   에이전트/거버넌스: agents, agent_subscription_rules,
+--                    policies, agent_policies,
+--                    certifications, agent_certifications
+--   워크스페이스  : workspaces, goals
+--   대화/메시지   : conversations, messages
+--   메시지 라우팅 : message_headers, message_receipts
+--   상호작용      : interactions, interaction_archive
+--   공지          : notices
+-- =============================================================================
