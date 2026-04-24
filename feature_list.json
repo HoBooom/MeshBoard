@@ -19,11 +19,11 @@
       "area": "foundation",
       "title": "기업 IdP 연동 및 RBAC 기반 로그인",
       "user_visible_behavior": "사용자가 기업 계정으로 로그인하면 일반사용자/개발자/운영자/거버넌스팀 역할에 맞는 홈 대시보드로 리다이렉트 된다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
-        "1. 테스트용 OAuth2 모킹 서버를 실행한다.",
-        "2. 운영자 계정으로 /auth/login 호출 후 발급된 JWT 토큰 내 역할(role)을 확인한다.",
-        "3. 권한이 없는 API 호출 시 403 Forbidden 에러가 발생하는지 확인한다."
+        "✅ [2026-04-24] 1. 테스트용 OAuth2 모킹 서버를 실행한다.",
+        "✅ [2026-04-24] 2. 운영자 계정으로 /auth/login 호출 후 발급된 JWT 토큰 내 역할(role)을 확인한다.",
+        "✅ [2026-04-24] 3. 권한이 없는 API 호출 시 403 Forbidden 에러가 발생하는지 확인한다."
       ],
       "evidence": [],
       "notes": "USERS, USER_ROLES 테이블 마이그레이션 필수. OIDC 추상화 레이어 적용."
