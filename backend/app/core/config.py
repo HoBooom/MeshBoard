@@ -37,5 +37,7 @@ class Settings(BaseSettings):
         """Parse CORS_ORIGINS JSON string into a list."""
         return json.loads(self.CORS_ORIGINS)
 
+    # ── LLM Configuration ─────────────────────────────────────
+    RUNYOUR_API_KEY: str = ""
 
 settings = Settings()
