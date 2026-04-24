@@ -34,13 +34,18 @@
       "area": "foundation",
       "title": "레지스트리 18개 테이블 스키마 및 확장 모듈 마이그레이션",
       "user_visible_behavior": "백엔드 구동 시 스키마가 완벽하게 세팅되어 API가 DB와 정상 통신한다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
         "1. uv run alembic upgrade head 실행",
         "2. PostgreSQL 접속 후 ltree 및 pgvector 익스텐션 활성화 여부 확인",
         "3. 18개 핵심 테이블(AGENTS, INTERACTIONS 등) 생성 확인"
       ],
-      "evidence": [],
+      "evidence": [
+        "✅ [2026-04-24] pyproject.toml 의존성(pgvector, sqlalchemy-utils) 추가 및 패키지 설치 완료",
+        "✅ [2026-04-24] schema_v1.sql에 정의된 15개의 ORM 모델 구축 완료 (agent, workspace, policy, conversation 등)",
+        "✅ [2026-04-24] 마이그레이션 적용 및 `\\dx` 명령어로 ltree, pgcrypto, vector 활성화 확인",
+        "✅ [2026-04-24] `\\dt` 명령어로 18개 테이블 전체 생성 완료 확인"
+      ],
       "notes": "ERD 기준. INTERACTIONS의 tree_path 필드는 반드시 ltree 타입이어야 함."
     },
     {

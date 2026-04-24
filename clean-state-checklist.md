@@ -1,5 +1,21 @@
 # Clean State Checklist
 
+## Session 002 체크 (2026-04-24)
+
+- [x] The standard startup path still works.
+  - `docker compose up -d` → meshboard-postgres healthy
+  - `cd backend && uv run alembic upgrade head` → 18개 테이블 전체 및 익스텐션 마이그레이션 완료
+  - `uv run uvicorn app.main:app --reload --port 8000` → 정상 기동
+- [x] The standard verification path still runs.
+  - `curl http://localhost:8000/health` → `{"status":"healthy"}`
+  - `docker exec meshboard-postgres psql -U meshboard -d meshboard -c "\dx"` → 익스텐션 정상
+- [x] Current progress is recorded in the progress log.
+  - `progress.md` → Session 002 업데이트 완료
+- [x] Feature state reflects what is actually passing versus unverified.
+  - `feature_list.json` → PH1-db-001: `"status": "passing"`, evidence 기록 완료
+- [x] No half-finished step is left undocumented.
+- [ ] The next session can continue without manual repair.
+
 ## Session 001 체크 (2026-04-24)
 
 - [x] The standard startup path still works.

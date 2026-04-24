@@ -5,7 +5,7 @@
 - **Repository root**: `/Users/hobongs/Desktop/HoBong_study/26-1/meshboard`
 - **Standard startup path**: `./init.sh` (또는 수동: docker compose up -d → alembic upgrade head → uvicorn)
 - **Standard verification path**: `curl http://localhost:8000/health`
-- **Current highest-priority unfinished feature**: `PH1-db-001` (priority 2 — 레지스트리 18개 테이블 스키마 마이그레이션)
+- **Current highest-priority unfinished feature**: `PH1-dash-001` (priority 3 — 홈 대시보드 및 타겟팅 공지 시스템)
 - **Current blocker**: 없음
 
 ---
@@ -63,4 +63,29 @@
 - **Known risk or unresolved issue**:
   - passlib + bcrypt 4.x 경고 메시지 (`error reading bcrypt version`) — 동작에는 영향 없으나 추후 `bcrypt` 직접 사용 또는 `passlib` 업데이트 고려
   - Frontend 빌드 (`npm run dev`) 미검증 — Session 002에서 확인
-- **Next best step**: `PH1-db-001` — 레지스트리 18개 테이블 스키마 및 확장 모듈 마이그레이션 진행
+- **Next best step**: `PH1-dash-001` — 홈 대시보드 및 타겟팅 공지 시스템 (NOTICES) 구현
+
+### Session 002
+- **Date**: 2026-04-24
+- **Goal**: PH1-db-001 — 레지스트리 18개 테이블 스키마 및 확장 모듈 마이그레이션
+- **Completed**:
+  - `pyproject.toml`에 `sqlalchemy-utils`, `pgvector` 추가
+  - `schema_v1.sql` 기준 15개 핵심 테이블에 대한 SQLAlchemy ORM 모델 구축 (agent, workspace, policy, conversation 등)
+  - 모든 DateTime 필드를 `TIMESTAMPTZ`로 통일
+  - Alembic을 활용한 통합 마이그레이션(`002_create_registry_tables`) 생성
+  - PostgreSQL 확장을 위한 `CREATE EXTENSION` (`ltree`, `vector`, `pgcrypto`) 추가
+- **Verification run**:
+  - ✅ `docker exec meshboard-postgres psql -U meshboard -d meshboard -c "\dx"` → `ltree`, `vector` 익스텐션 활성화 확인
+  - ✅ `docker exec meshboard-postgres psql -U meshboard -d meshboard -c "\dt"` → 18개 테이블 전체 생성 확인
+  - ✅ FastAPI 서버(`curl http://localhost:8000/health`) → 정상 동작 유지 확인
+- **Evidence captured**:
+  - DB 테이블 18개 및 `ltree`, `vector` 확장 활성화 확인 완료
+- **Commits**: `feat(PH1-db-001): 핵심 레지스트리 18개 테이블 스키마 및 마이그레이션 적용`
+- **Files or artifacts updated**:
+  - `backend/pyproject.toml`
+  - `backend/app/models/__init__.py`
+  - `backend/app/models/agent.py`, `workspace.py`, `policy.py`, `certification.py`, `conversation.py`, `message.py`, `interaction.py`, `notice.py`
+  - `backend/alembic/versions/bd44babbb822_create_registry_tables.py`
+  - `progress.md`, `feature_list.json`, `clean-state-checklist.md`
+- **Known risk or unresolved issue**: 없음
+- **Next best step**: `PH1-dash-001` — 홈 대시보드 및 타겟팅 공지 시스템 구현
