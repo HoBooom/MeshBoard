@@ -1,6 +1,6 @@
 {
   "project": "MeshBoard",
-  "last_updated": "2026-04-13",
+  "last_updated": "2026-04-28",
   "rules": {
     "single_active_feature": true,
     "passing_requires_evidence": true,
@@ -92,47 +92,94 @@
       "area": "creator_wb",
       "title": "에이전트 메타데이터 등록 및 구독 편집기",
       "user_visible_behavior": "크리에이터가 에이전트의 자질(도구, 프롬프트)을 등록하고, 어떤 이벤트를 수신할지(구독 규칙) UI에서 설정한다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
-        "1. 크리에이터가 ui를 통해 에이전트 정보를 등록할 수 있는지 확인(Google Agent Development kit, langgraph를 통한 에이전트 및 도구(MCP) 관리)",
-        "2. 에이전트 정보를 등록하면, AGENTS 및 AGENT_SUBSCRIPTION_RULES 테이블에 정상적으로 저장되는지 확인",
-        "3. 실제 에이전트가 LLM API를 통해 메시지를 수신하고 도구(MCP)사용 및 처리하는지 확인"
+        "✅ [2026-04-24] 1. /dashboard/creator 의 CreatorPage 에서 이름·버전·목적·도구(MCP)·system_prompt·구독 규칙 입력 → agentsApi.createAgent 로 POST /api/v1/agents 가 호출되고 201 응답과 함께 목록에 노출됨을 확인.",
+        "✅ [2026-04-24] 2. AGENTS.agent_id=6f7aad5e-… (status=DRAFT, tools=[lookup_employee_leave, search_knowledge_base, get_current_time], metadata={category:HR}) 및 AGENT_SUBSCRIPTION_RULES.rule_id=119d2672-… (watch_domains=[hr], watch_tags=[leave,policy], min_priority=medium) 가 동시에 저장된 것을 psql 로 확인.",
+        "✅ [2026-04-24] 3. POST /api/v1/agents/{id}/invoke 로 'E001 사번의 연차 잔여일을 알려줘' 전송 → RunYour AI openai/gpt-5 모델이 lookup_employee_leave MCP 를 호출하고(step: tool → observation → final) 최종 답변 '김하늘 님의 남은 연차는 11일이며, 사용한 연차는 4일입니다.' 를 반환함을 확인. VPN 질의 시 search_knowledge_base 도구 호출도 성공."
       ],
-      "evidence": [],
-      "notes": "초기 상태는 status='draft'로 저장됨."
+      "evidence": [
+        "backend/app/api/v1/agents.py — /api/v1/agents CRUD + /tools + /{id}/subscription-rule + /{id}/invoke",
+        "backend/app/services/agent_runtime.py — OpenAI-호환 ChatCompletions 기반 텍스트 ReAct 루프, 내장 MCP 실행",
+        "backend/app/services/tool_catalog.py — 내장 도구(MCP) 5종: get_current_time / echo / calculate / lookup_employee_leave / search_knowledge_base",
+        "backend/app/schemas/agent.py — AgentCreate/Read/Update, SubscriptionRule*, ToolDescriptor, Invoke* 스키마",
+        "frontend/src/pages/CreatorPage.tsx — 에이전트 목록·등록/편집 모달·구독 규칙 편집·실행 테스트 패널",
+        "frontend/src/api/agents.ts — /api/v1/agents 래퍼 (listTools, CRUD, upsertSubscriptionRule, invokeAgent)"
+      ],
+      "notes": "초기 상태는 status='DRAFT' 로 저장. RunYour AI 프록시가 GPT-5 계열의 OpenAI function-calling 응답을 제대로 중계하지 못해, 내장 도구는 langchain tool 바인딩 대신 LLM 이 {action:tool|final, …} JSON 을 뱉게 하는 텍스트 기반 ReAct 루프로 실행한다."
+    },
+    {
+      "id": "PH3-mesh-000",
+      "priority": 6,
+      "area": "runtime",
+      "title": "LangGraph 기반 에이전트 노드 엔진 구현",
+      "user_visible_behavior": "각 에이전트는 에이전트 그래프(langgraph) 구조 상에서 하나의 노드로써 존재,동작한다.",
+      "status": "passing",
+      "verification": [
+        "✅ [2026-04-28] 1. 기존 단순 llm호출 에이전트를 LangGraph StateGraph 구조(agent_node → mcp_tool_node → agent_node)로 리팩토링.",
+        "✅ [2026-04-28] 2. InvokeResponse.transitions 및 CreatorPage의 LangGraph 전이 패널에서 노드 간 전이(Transition)가 명시적으로 출력되는지 확인.",
+        "✅ [2026-04-28] 3. MemorySaver Checkpointer 기반 interrupt_after_node='agent_node' 중단 후 checkpoint_thread_id + resume=true 로 mcp_tool_node부터 재개되는지 fake LLM 테스트로 확인.",
+        "✅ [2026-04-28] 4. 에이전트 실행이 messages/steps/tool_calls/transitions 상태(State)를 가진 LangGraph 노드 실행으로 동작하는지 확인.",
+        "✅ [2026-04-28] 5. tool_catalog.py의 도구들을 MCP tool definition(name/description/inputSchema) 규격으로 변환.",
+        "✅ [2026-04-28] 6. LangGraph mcp_tool_node에서 MCP 도구 lookup_employee_leave 호출 및 observation → final 흐름 성공 확인.",
+        "✅ [2026-04-28] 7. /api/v1/agents/tools 응답과 CreatorPage 도구 카드에서 사용 가능한 MCP 도구 목록 및 inputSchema 노출 확인."
+      ],
+      "evidence": [
+        "backend/app/services/agent_runtime.py — LangGraph StateGraph + MemorySaver 기반 에이전트 CompiledGraph 런타임 구현",
+        "backend/app/services/tool_catalog.py — LangChain Tool → MCP tool definition(inputSchema) 변환 유틸 추가",
+        "backend/app/schemas/agent.py — InvokeRequest checkpoint/resume 옵션 및 InvokeResponse transitions/checkpoint/graph 필드 추가",
+        "frontend/src/pages/CreatorPage.tsx — 실행 테스트 결과에 LangGraph 전이 로그와 Checkpointer 상태 패널 표시",
+        "✅ `cd backend && uv run python -m compileall app/services/agent_runtime.py app/services/tool_catalog.py app/schemas/agent.py app/api/v1/agents.py` 통과",
+        "✅ `cd backend && uv run python - <<'PY' ... fake LLM LangGraph invoke, interrupt, resume verified ... PY` 통과",
+        "✅ `cd backend && uv run python - <<'PY' ... MCP tool descriptors verified: 5 tools ... PY` 통과",
+        "✅ `python -m json.tool feature_list.json >/dev/null` 통과",
+        "✅ `cd frontend && npm run build` 통과"
+      ],
+      "notes": "기존 ChatCompletions 루프를 LangGraph 노드로 전환. 에이전트 하나가 하나의 CompiledGraph가 됨."
     },
     {
       "id": "PH3-mesh-001",
-      "priority": 6,
+      "priority": 7,
       "area": "routing",
       "title": "Agent-Mesh 메시지 발행 브로커 (A2A 통신)",
       "user_visible_behavior": "에이전트 또는 사용자가 시스템에 이벤트를 발행할 수 있다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
-        "1. POST /api/v1/messages/publish 엔드포인트에 도메인, 인텐트, 페이로드 전송",
-        "2. MESSAGE_HEADERS 테이블에 정상 기록되는지 확인"
+        "✅ [2026-04-28] 1. POST /api/v1/messages/publish 엔드포인트에 domain=hr, intent=leave_status_requested, payload={employee_id:E001,...} 전송 후 201 응답 확인.",
+        "✅ [2026-04-28] 2. MESSAGE_HEADERS.message_id=289df364-fe98-4be2-8fb2-b8e775a7ee2d 행이 생성되고 domain/intent/scope/body_ref 가 정상 저장되는지 DB 조회로 확인."
       ],
-      "evidence": [],
-      "notes": "Google Agent Kit, langgraph의 Tool(Function)로 래핑될 내부 API."
+      "evidence": [
+        "backend/app/schemas/message.py — PublishMessageRequest/Response 및 MessageHeaderRead 스키마",
+        "backend/app/services/message_broker.py — MESSAGE_HEADERS 저장 브로커 서비스 및 inline body_ref 직렬화",
+        "backend/app/api/v1/messages.py — POST /api/v1/messages/publish 구현 (user/agent sender 검증, workspace/conversation 접근 검증)",
+        "backend/app/main.py — messages_router 등록",
+        "✅ `cd backend && uv run python -m compileall app/schemas/message.py app/services/message_broker.py app/api/v1/messages.py app/main.py` 통과",
+        "✅ `cd backend && uv run python - <<'PY' ... message publish schema and body_ref verified ... PY` 통과",
+        "✅ `cd backend && uv run python - <<'PY' ... POST /messages/publish verified: 289df364-fe98-4be2-8fb2-b8e775a7ee2d hr/leave_status_requested scope=global ... PY` 통과"
+      ],
+      "notes": "langchain, langgraph의 Tool(Function)로 래핑될 내부 API."
     },
     {
       "id": "PH3-mesh-002",
-      "priority": 7,
+      "priority": 8,
       "area": "routing",
       "title": "에이전트 구독 규칙 및 라우팅 엔진",
       "user_visible_behavior": "발행된 메시지가 워크스페이스의 메시지 큐에 등록되고, 조건에 맞는 에이전트들(메시지 내용을 구독한)이 해당 메시지를 수신하여 처리한다.",
       "status": "not_started",
       "verification": [
-        "1. AGENT_SUBSCRIPTION_RULES에 특정 도메인 구독 설정",
-        "2. 메시지 발행 후, 메시지가 정상적으로 워크스페이스 메시지 큐에 등록되는 지 확인",
-        "3. 구독 중인 에이전트가 해당 메시지를 수신하여 처리하는 지 확인"
+        "1. 워크스페이스 페이지 생성(모든 사용자에게 권한 부여)",
+        "2. 워크스페이스 페이지에서 특정 워크스페이스 생성시 해당 워크스페이스에서 사용할 에이전트 선택(마켓플레이스에서 선택 혹은 직접 생성 및 등록을 통해 가능)",
+        "2-1. 마켓플레이스 페이지는 워크스페이스 페이지 하위로 이동 및 마켓플레이스 권한을 크리에이터 권한에 포함(기존 관리자는 홈, 워크스페이스 페이지 권한만 할당)",
+        "3. AGENT_SUBSCRIPTION_RULES에 특정 도메인 구독 설정",
+        "4. 메시지 발행 후, 메시지가 정상적으로 워크스페이스 메시지 큐에 등록되는 지 확인",
+        "5. 해당 워크스페이스 내에 구독 중인 에이전트가 해당 메시지를 수신하여 처리하는 지 확인"
       ],
       "evidence": [],
       "notes": "비동기 워커(Celery/Kafka)를 통한 메시지 큐 처리 필요."
     },
     {
       "id": "PH3-ui-consumer-001",
-      "priority": 8,
+      "priority": 9,
       "area": "consumer_wb",
       "title": "상황 인식 기반(Context-aware) 토폴로지 맵",
       "user_visible_behavior": "사용자는 주어진 상황(현재 워크스페이스)을 모니터링 중인 에이전트들의 활성 상태를 맵 형태로 시각적으로 확인한다.",
@@ -146,7 +193,7 @@
     },
     {
       "id": "PH3-ui-consumer-002",
-      "priority": 9,
+      "priority": 10,
       "area": "consumer_wb",
       "title": "공유 워크스페이스 및 목표(Goal) 오케스트레이션",
       "user_visible_behavior": "여러 에이전트가 단일 목표를 위해 대화하고 작업하는 과정을 하나의 워크스페이스에서 실시간으로 관찰하고 개입할 수 있다.",
@@ -160,7 +207,7 @@
     },
     {
       "id": "PH3-ui-creator-002",
-      "priority": 10,
+      "priority": 11,
       "area": "creator_wb",
       "title": "시나리오 기반 시뮬레이션 환경 (Sandbox)",
       "user_visible_behavior": "가상의 이벤트를 발생시켜 에이전트들이 실 운영 환경에 영향 없이 올바르게 연쇄 반응하는지 테스트한다.",
@@ -175,7 +222,7 @@
     },
     {
       "id": "PH3-ui-trust-001",
-      "priority": 11,
+      "priority": 12,
       "area": "trust_wb",
       "title": "정책 템플릿 검증 및 인증 라이프사이클 관리",
       "user_visible_behavior": "거버넌스팀이 에이전트의 행동을 제어하는 정책을 생성하고, 안전 테스트를 통과한 에이전트에 인증 마크를 부여한다.",
@@ -189,7 +236,7 @@
     },
     {
       "id": "PH3-ui-operator-001",
-      "priority": 12,
+      "priority": 13,
       "area": "operator_wb",
       "title": "에이전트 런타임 제어 및 모니터링",
       "user_visible_behavior": "운영자가 현재 시스템의 에이전트 처리량, 오류율을 실시간 확인하고 폭주하는 에이전트를 강제 정지(Kill/Pause)할 수 있다.",
@@ -203,7 +250,7 @@
     },
     {
       "id": "PH3-ui-operator-002",
-      "priority": 13,
+      "priority": 14,
       "area": "operator_wb",
       "title": "A2A 실행 트리 (Execution Tree) 뷰어",
       "user_visible_behavior": "특정 작업의 결과를 클릭하면 상위 에이전트부터 하위 에이전트까지의 위임 체인과 각 단계별 추론(Reasoning) 과정을 트리 맵으로 추적할 수 있다.",
@@ -217,7 +264,7 @@
     },
     {
       "id": "PH4-gov-001",
-      "priority": 14,
+      "priority": 15,
       "area": "advanced",
       "title": "규제 준수용 불변 감사 아카이브 (Immutable Archive)",
       "user_visible_behavior": "설정된 정책(보존 기간 90일 등)에 따라 지난 대화 기록이 변조 불가능한 아카이브 테이블로 안전하게 이관된다.",
@@ -232,7 +279,7 @@
     },
     {
       "id": "PH4-analytics-001",
-      "priority": 15,
+      "priority": 16,
       "area": "advanced",
       "title": "모델 토큰 비용 및 병렬 실행 성능 분석 대시보드",
       "user_visible_behavior": "어떤 모델(Gemini, Claude 등)이 비용을 가장 많이 쓰는지 집계하고, 병렬 실행 그룹(parallel_group_id)별 성능 지표를 분석한다.",
@@ -247,7 +294,7 @@
     },
     {
       "id": "PH4-integ-001",
-      "priority": 16,
+      "priority": 17,
       "area": "advanced",
       "title": "이벤트 버스 및 외부 커넥터 통합 (SIEM)",
       "user_visible_behavior": "에이전트 보안 위반이나 치명적 알럿 발생 시 기업 내부의 슬랙(Slack), 웹훅, 또는 SIEM 솔루션으로 알림이 자동 전송된다.",
@@ -262,7 +309,7 @@
     },
     {
       "id": "PH4-ops-001",
-      "priority": 17,
+      "priority": 18,
       "area": "advanced",
       "title": "자동화된 Schema_ver 관리 및 마이그레이션",
       "user_visible_behavior": "에이전트 대화 스키마(구조)가 변경되더라도, 과거 버전(schema_ver)의 대화 기록이 깨지지 않고 하위 호환성을 유지하여 표시된다.",

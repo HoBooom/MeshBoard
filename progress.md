@@ -5,7 +5,7 @@
 - **Repository root**: `/Users/hobongs/Desktop/HoBong_study/26-1/meshboard`
 - **Standard startup path**: `./init.sh` (또는 수동: docker compose up -d → alembic upgrade head → uvicorn)
 - **Standard verification path**: `curl http://localhost:8000/health`
-- **Current highest-priority unfinished feature**: `PH2-market-001` (priority 4 — 자연어 기반 에이전트 마켓플레이스 검색)
+- **Current highest-priority unfinished feature**: `PH3-mesh-002` (priority 8 — 구독 규칙 및 라우팅 엔진)
 - **Current blocker**: 없음
 
 ---
@@ -113,3 +113,105 @@
   - `progress.md`, `feature_list.json`, `clean-state-checklist.md`
 - **Known risk or unresolved issue**: 없음
 - **Next best step**: `PH2-market-001` — 자연어 기반 에이전트 마켓플레이스 검색 구현
+
+### Session 004
+- **Date**: 2026-04-24
+- **Goal**: PH3-creator-001 — 에이전트 메타데이터 등록 및 구독 편집기 (Creator Workbench)
+- **Completed**:
+  - 백엔드 의존성 추가: `openai`, `langchain`, `langchain-core`, `langchain-openai`, `langgraph` (pyproject.toml)
+  - 내장 MCP 도구 5종 (`backend/app/services/tool_catalog.py`): `get_current_time`, `echo`, `calculate`, `lookup_employee_leave`, `search_knowledge_base`
+  - Pydantic 스키마 정비 (`backend/app/schemas/agent.py`): `AgentCreate/Read/Update` (SQLAlchemy `metadata` 충돌 회피용 `metadata_` ↔ JSON `metadata` 매핑), `SubscriptionRuleBase/Create/Read`, `ToolDescriptor`, `InvokeRequest/Response`
+  - Creator Workbench CRUD API (`backend/app/api/v1/agents.py`): `GET/POST /api/v1/agents`, `GET/PUT /api/v1/agents/{id}`, `GET/PUT /api/v1/agents/{id}/subscription-rule`, `GET /api/v1/agents/tools`, `POST /api/v1/agents/{id}/invoke`
+  - 에이전트 런타임 (`backend/app/services/agent_runtime.py`): RunYour AI (OpenAI 호환) chat.completions 를 직접 호출하며 `{action:tool|final, …}` JSON 응답을 파싱하는 텍스트 기반 ReAct 루프
+  - 프론트엔드 API 래퍼 (`frontend/src/api/agents.ts`) 및 Creator Workbench UI (`frontend/src/pages/CreatorPage.tsx`): 에이전트 목록, 등록/편집 모달, 도구 다중 선택, 구독 규칙 편집, 실행 테스트 패널 (ReAct 스텝·도구 호출 시각화)
+  - App 라우팅에 `/dashboard/creator` 연결 (`frontend/src/App.tsx`)
+- **Verification run**:
+  - ✅ `POST /api/v1/agents` 로 `HR 연차 도우미 (creator-test)` 등록 → 201 응답, `status=DRAFT`
+  - ✅ `docker exec meshboard-postgres psql -c "SELECT … FROM agents;"` 에서 새 행 확인, `tools=['lookup_employee_leave','search_knowledge_base','get_current_time']`, `metadata={"category":"HR"}`
+  - ✅ `agent_subscription_rules` 테이블에서 매칭 rule (watch_domains=[hr], watch_tags=[leave,policy], min_priority=medium) 저장 확인
+  - ✅ `POST /api/v1/agents/{id}/invoke` 로 'E001 사번의 연차 잔여일을 알려줘' → 모델 `openai/gpt-5` 가 `lookup_employee_leave` 도구 호출 후 `김하늘 님의 남은 연차는 11일이며, 사용한 연차는 4일입니다.` 응답
+  - ✅ 동일 엔드포인트로 'VPN 접속 방법' 질의 → `search_knowledge_base` 도구 호출 후 FAQ 기반 답변 반환
+  - ✅ 인사말('안녕? 너는 누구야?') → 도구 호출 없이 자연어 응답 (tool_calls: [])
+- **Evidence captured**:
+  - 에이전트 실행 스텝 예시:
+    - assistant: `{"action":"tool","tool":"lookup_employee_leave","arguments":{"employee_id":"E001"}}`
+    - tool(lookup_employee_leave): `김하늘 님의 남은 연차는 11일, 사용한 연차는 4일 입니다.`
+    - assistant: `{"action":"final","answer":"김하늘 님의 남은 연차는 11일이며, 사용한 연차는 4일입니다."}`
+  - `AGENTS.agent_id = 6f7aad5e-9953-47e7-bccd-27a0f17ada69` / `AGENT_SUBSCRIPTION_RULES.rule_id = 119d2672-fbac-454c-be51-75ce741fbd99`
+- **Commits**: 미커밋 (다음 커밋에 포함 예정)
+- **Files or artifacts updated**:
+  - `backend/pyproject.toml`
+  - `backend/app/core/config.py` (RUNYOUR_BASE_URL / DEFAULT_LLM_MODEL `openai/gpt-5` 추가)
+  - `backend/app/services/__init__.py`, `backend/app/services/tool_catalog.py`, `backend/app/services/agent_runtime.py`
+  - `backend/app/schemas/agent.py`
+  - `backend/app/api/v1/agents.py`, `backend/app/main.py` (router wiring)
+  - `frontend/src/api/agents.ts`, `frontend/src/pages/CreatorPage.tsx`, `frontend/src/App.tsx`
+  - `progress.md`, `feature_list.json`
+- **Known risk or unresolved issue**:
+  - RunYour AI 프록시가 GPT-5 계열의 OpenAI function-calling 응답을 일관되게 중계하지 못해 langchain tool 바인딩 대신 텍스트 기반 ReAct 루프를 사용 중. 이후 표준 OpenAI API 로 전환 시 langgraph `create_react_agent` 로 복귀할 수 있도록 도구 레지스트리는 langchain Tool 기반으로 유지.
+  - 업스트림 모델 (`openai/gpt-5.1`) 에 간헐적 503 발생 → 기본 모델을 `openai/gpt-5` 로 고정.
+- **Next best step**: `PH3-mesh-001` — 메시지 브로커/전달 레지스트리 구현
+
+### Session 005
+- **Date**: 2026-04-28
+- **Goal**: PH3-mesh-000 — LangGraph 기반 에이전트 노드 엔진 구현
+- **Completed**:
+  - `agent_runtime.py`의 수동 ReAct 반복을 LangGraph `StateGraph` 기반 `agent_node -> mcp_tool_node -> agent_node` 실행으로 전환
+  - 에이전트 실행마다 하나의 `CompiledGraph`를 구성하고 `MemorySaver` checkpointer를 연결
+  - `InvokeRequest`에 `checkpoint_thread_id`, `resume`, `interrupt_after_node` 옵션 추가
+  - `InvokeResponse`에 `transitions`, `checkpoint`, `graph` 메타데이터 추가
+  - `tool_catalog.py`에 LangChain Tool → MCP tool definition(`name`, `description`, `inputSchema`) 변환 유틸 추가
+  - `/api/v1/agents/tools` 응답과 Creator Workbench 도구 카드에 MCP inputSchema 노출
+  - Creator Workbench 실행 테스트 결과에 LangGraph 전이 로그 및 Checkpointer 상태 패널 추가
+- **Verification run**:
+  - ✅ `cd backend && uv run python -m compileall app/services/agent_runtime.py app/services/tool_catalog.py app/schemas/agent.py app/api/v1/agents.py`
+  - ✅ fake LLM 기반 런타임 테스트: 일반 invoke, `interrupt_after_node='agent_node'`, `checkpoint_thread_id + resume=true` 재개 확인
+  - ✅ MCP tool descriptor 검증: `MCP tool descriptors verified: 5 tools`
+  - ✅ `python -m json.tool feature_list.json >/dev/null`
+  - ✅ `cd frontend && npm run build`
+  - ✅ ReadLints: 수정 파일 linter error 없음
+- **Evidence captured**:
+  - fake LLM 테스트 출력: `LangGraph invoke, interrupt, resume verified`
+  - LangGraph 전이 예시: `__start__ -> agent_node -> mcp_tool_node -> agent_node -> __end__`
+  - Checkpointer interrupt 시 `next_nodes=['mcp_tool_node']`, resume 후 `resumable=false`
+- **Commits**: 미커밋
+- **Files or artifacts updated**:
+  - `backend/app/services/agent_runtime.py`
+  - `backend/app/services/tool_catalog.py`
+  - `backend/app/schemas/agent.py`
+  - `backend/app/api/v1/agents.py`
+  - `frontend/src/api/agents.ts`
+  - `frontend/src/pages/CreatorPage.tsx`
+  - `feature_list.json`, `progress.md`
+- **Known risk or unresolved issue**:
+  - Checkpointer는 현재 프로세스 메모리(`MemorySaver`) 기반이므로 서버 재시작 후 resume은 불가. 운영 단계에서는 DB/Redis 기반 checkpointer로 교체 필요.
+- **Next best step**: `PH3-mesh-001` — 메시지 브로커/전달 레지스트리 구현
+
+### Session 006
+- **Date**: 2026-04-28
+- **Goal**: PH3-mesh-001 — Agent-Mesh 메시지 발행 브로커 (A2A 통신)
+- **Completed**:
+  - `PublishMessageRequest/Response` 및 `MessageHeaderRead` 스키마 추가
+  - `message_broker.py` 서비스 추가: 발행 payload를 `body_ref=inline:json:...` 형태로 직렬화하고 `MESSAGE_HEADERS`에 저장
+  - `POST /api/v1/messages/publish` API 추가
+  - 사용자 발행은 현재 로그인 사용자로 제한하고, 에이전트 발행은 소유자 검증 후 허용
+  - `workspace_id`/`conversation_id`가 포함된 경우 존재 및 접근 권한 검증
+  - `main.py`에 messages router 등록
+- **Verification run**:
+  - ✅ `cd backend && uv run python -m compileall app/schemas/message.py app/services/message_broker.py app/api/v1/messages.py app/main.py`
+  - ✅ publish schema 및 inline `body_ref` 직렬화 검증
+  - ✅ 개발자 계정 로그인 후 `POST /api/v1/messages/publish` 호출 → 201 응답
+  - ✅ DB 조회로 `MESSAGE_HEADERS.message_id=289df364-fe98-4be2-8fb2-b8e775a7ee2d`, `domain=hr`, `intent=leave_status_requested`, `scope=global` 저장 확인
+  - ✅ ReadLints: 수정 파일 linter error 없음
+- **Evidence captured**:
+  - API 검증 출력: `POST /messages/publish verified: 289df364-fe98-4be2-8fb2-b8e775a7ee2d hr/leave_status_requested scope=global`
+- **Commits**: 미커밋
+- **Files or artifacts updated**:
+  - `backend/app/schemas/message.py`
+  - `backend/app/services/message_broker.py`
+  - `backend/app/api/v1/messages.py`
+  - `backend/app/main.py`
+  - `feature_list.json`, `progress.md`
+- **Known risk or unresolved issue**:
+  - 현재 단계는 브로커 기록까지이며, 구독 규칙 매칭/큐 등록/receipt 생성은 PH3-mesh-002 범위로 남김.
+- **Next best step**: `PH3-mesh-002` — 에이전트 구독 규칙 및 라우팅 엔진 구현

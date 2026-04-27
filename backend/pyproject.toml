@@ -17,6 +17,11 @@ dependencies = [
     "python-multipart>=0.0.9",
     "sqlalchemy-utils>=0.41.0",
     "pgvector>=0.2.0",
+    "openai>=1.55.0",
+    "langchain>=0.3.7",
+    "langchain-core>=0.3.15",
+    "langchain-openai>=0.2.8",
+    "langgraph>=0.2.50",
 ]
 
 [tool.hatch.build.targets.wheel]

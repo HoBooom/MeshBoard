@@ -109,8 +109,8 @@ npm run dev
 | 이름 | 이메일 | 비밀번호 | 역할 |
 |------|--------|----------|------|
 | 관리자 | admin@meshboard.io | admin1234 | governance, trust_ops |
-| 개발자 | dev@meshboard.io | dev1234 | agent_owner, agent_engineer |
-| 운영자 | ops@meshboard.io | ops1234 | trust_ops, release_manager |
+| 개발자 | dev@meshboard.io | dev1234 | agent_owner, agent_engineer, trust_ops, release_manager |
+| 운영자 | ops@meshboard.io | ops1234 | trust_ops, release_manager, agent_owner, agent_engineer |
 | 평가자 | user@meshboard.io | user1234 | evaluator |
 
 ## 6. 주요 API 엔드포인트

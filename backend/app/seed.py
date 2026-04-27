@@ -29,14 +29,14 @@ SEED_USERS = [
         "email": "dev@meshboard.io",
         "login_id": "developer",
         "password": "dev1234",
-        "roles": ["agent_owner", "agent_engineer"],
+        "roles": ["agent_owner", "agent_engineer", "trust_ops", "release_manager"],
     },
     {
         "name": "운영자",
         "email": "ops@meshboard.io",
         "login_id": "operator",
         "password": "ops1234",
-        "roles": ["trust_ops", "release_manager"],
+        "roles": ["trust_ops", "release_manager", "agent_owner", "agent_engineer"],
     },
     {
         "name": "평가자",
@@ -55,8 +55,24 @@ async def seed_users(session: AsyncSession) -> None:
         result = await session.execute(
             select(User).where(User.email == user_data["email"])
         )
-        if result.scalar_one_or_none():
-            print(f"  ⏭  이미 존재: {user_data['email']}")
+        user = result.scalar_one_or_none()
+        if user:
+            role_result = await session.execute(
+                select(UserRole.role).where(UserRole.user_id == user.user_id)
+            )
+            existing_roles = set(role_result.scalars().all())
+            missing_roles = [
+                role for role in user_data["roles"] if role not in existing_roles
+            ]
+            for role in missing_roles:
+                session.add(UserRole(user_id=user.user_id, role=role))
+            if missing_roles:
+                print(
+                    f"  🔄 역할 추가: {user_data['email']} "
+                    f"({', '.join(missing_roles)})"
+                )
+            else:
+                print(f"  ⏭  이미 존재: {user_data['email']}")
             continue
 
         user = User(

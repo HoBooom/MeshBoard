@@ -42,3 +42,23 @@ class Goal(Base):
     __table_args__ = (
         CheckConstraint("state IN ('ACTIVE','COMPLETED','CANCELLED')", name="ck_goals_state"),
     )
+
+
+class WorkspaceAgent(Base):
+    __tablename__ = "workspace_agents"
+
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("workspaces.workspace_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("agents.agent_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    added_at: Mapped[datetime] = mapped_column(
+        TIMESTAMPTZ,
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )

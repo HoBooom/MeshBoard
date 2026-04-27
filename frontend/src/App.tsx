@@ -8,6 +8,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import MarketplacePage from './pages/MarketplacePage';
+import CreatorPage from './pages/CreatorPage';
 import DashboardLayout from './layouts/DashboardLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -29,7 +30,7 @@ export default function App() {
         <Route index element={<DashboardPage />} />
         {/* 향후 추가 라우트 */}
         <Route path="marketplace" element={<MarketplacePage />} />
-        <Route path="creator" element={<PlaceholderPage title="크리에이터 워크벤치" />} />
+        <Route path="creator" element={<CreatorPage />} />
         <Route path="trust" element={<PlaceholderPage title="신뢰 워크벤치" />} />
         <Route path="operator" element={<PlaceholderPage title="운영 관리" />} />
       </Route>

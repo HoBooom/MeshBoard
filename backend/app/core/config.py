@@ -39,5 +39,7 @@ class Settings(BaseSettings):
 
     # ── LLM Configuration ─────────────────────────────────────
     RUNYOUR_API_KEY: str = ""
+    RUNYOUR_BASE_URL: str = "https://api.runyour.ai/v1"
+    DEFAULT_LLM_MODEL: str = "openai/gpt-5"
 
 settings = Settings()
