@@ -162,48 +162,259 @@
     {
       "id": "PH3-mesh-002",
       "priority": 8,
-      "area": "routing",
-      "title": "에이전트 구독 규칙 및 라우팅 엔진",
-      "user_visible_behavior": "발행된 메시지가 워크스페이스의 메시지 큐에 등록되고, 조건에 맞는 에이전트들(메시지 내용을 구독한)이 해당 메시지를 수신하여 처리한다.",
-      "status": "not_started",
+      "area": "workspace",
+      "title": "환경 워크스페이스 및 에이전트 메시 구조",
+      "user_visible_behavior": "사용자는 자동차 공장 전체, 도시 데이터 같은 환경 단위 워크스페이스를 보고 권한을 신청하며, 개발자/운영자는 에이전트 마켓플레이스에서 여러 에이전트를 복수 수량으로 배치해 Slack형 메시징 뷰에서 소통 현황을 확인한다.",
+      "status": "passing",
       "verification": [
-        "1. 워크스페이스 페이지 생성(모든 사용자에게 권한 부여)",
-        "2. 워크스페이스 페이지에서 특정 워크스페이스 생성시 해당 워크스페이스에서 사용할 에이전트 선택(마켓플레이스에서 선택 혹은 직접 생성 및 등록을 통해 가능)",
-        "2-1. 마켓플레이스 페이지는 워크스페이스 페이지 하위로 이동 및 마켓플레이스 권한을 크리에이터 권한에 포함(기존 관리자는 홈, 워크스페이스 페이지 권한만 할당)",
-        "3. AGENT_SUBSCRIPTION_RULES에 특정 도메인 구독 설정",
-        "4. 메시지 발행 후, 메시지가 정상적으로 워크스페이스 메시지 큐에 등록되는 지 확인",
-        "5. 해당 워크스페이스 내에 구독 중인 에이전트가 해당 메시지를 수신하여 처리하는 지 확인"
+        "✅1. 워크스페이스 목록 대시보드에서 접근 가능한 환경 카드와 전체 워크스페이스 권한 신청 UI 확인",
+        "2. 개발자/운영자에게만 새 워크스페이스 생성 버튼 노출 및 관리자/평가자 생성 제한 확인",
+        "3. 생성 Wizard에서 기본 정보, 마켓플레이스 에이전트 선택, 동일 에이전트 수량 조절, 인라인 초안 생성, 환경 구성 Coming Soon 자리 확인",
+        "✅4. 워크스페이스 상세에서 에이전트를 사람처럼 표시하고 자연어 메시지와 접기/펼치기 상세 정보 확인",
+        "✅5. 워크스페이스 메시지 발행 시 MESSAGE_HEADERS, MESSAGES 큐, MESSAGE_RECEIPTS 라우팅 요약 저장 확인"
       ],
-      "evidence": [],
-      "notes": "비동기 워커(Celery/Kafka)를 통한 메시지 큐 처리 필요."
+      "evidence": [
+        "cd backend && uv run python -m compileall app/models/workspace.py app/schemas/workspace.py app/api/v1/workspaces.py app/api/v1/messages.py app/services/message_broker.py app/main.py",
+        "cd backend && uv run alembic upgrade head",
+        "cd frontend && npm run build",
+        "dev@meshboard.io 로그인 후 GET /api/v1/workspaces smoke test: workspace_count=8, access_status=system, user_can_access=true"
+      ],
+      "notes": "현재 라우팅은 동기식 receipt 생성이며, 운영 단계의 비동기 워커(Celery/Kafka) 처리는 후속 단계에서 확장."
     },
     {
       "id": "PH3-ui-consumer-001",
       "priority": 9,
       "area": "consumer_wb",
-      "title": "상황 인식 기반(Context-aware) 토폴로지 맵",
-      "user_visible_behavior": "사용자는 주어진 상황(현재 워크스페이스)을 모니터링 중인 에이전트들의 활성 상태를 맵 형태로 시각적으로 확인한다.",
-      "status": "not_started",
-      "verification": [
-        "1. 프론트엔드 React Flow/D3.js 맵 컴포넌트 마운트 확인",
-        "2. 에이전트 노드 클릭 시 사이드 패널에 최근 상호작용 내역 로드 확인"
+      "title": "상황 인식 기반(Context-aware) 에이전트 토폴로지 맵",
+      "user_visible_behavior": "워크스페이스 상세페이지에서 사용자는 메시징/맵 토글을 통해 현재 환경을 모니터링 중인 에이전트들의 활성 상태, 연결 관계, 메시지 흐름, 이벤트 발생 지점을 토폴로지 맵 형태로 확인할 수 있다. 맵은 단순 네트워크 그래프가 아니라 특정 환경(예: 자동차 공장, 도시 데이터, 물류센터 등)을 구성하는 에이전트 메시 구조를 시각화한다.",
+      "status": "passing",
+      "functional_requirements": [
+        "워크스페이스 상세페이지 상단 또는 좌측에 'Messaging / Map' 토글을 제공한다.",
+        "Map 모드에서는 React Flow 또는 D3.js 기반의 노드-엣지 그래프를 렌더링한다.",
+        "각 에이전트는 하나의 노드로 표시되며, 노드에는 에이전트 이름, 역할, 상태(active / processing / idle / error), 최근 메시지 수 또는 이벤트 수가 표시된다.",
+        "동일 역할의 에이전트가 여러 개 존재할 수 있으므로 동일 타입 에이전트를 개별 노드로 구분한다. 예: Inspector Agent #1, #2, #3.",
+        "에이전트 간 메시지 또는 의존 관계는 엣지로 표시한다.",
+        "엣지는 상태에 따라 시각적으로 구분한다. 예: 실시간 메시지 흐름, 최근 상호작용, 비활성 연결, 오류 연결.",
+        "노드 클릭 시 우측 사이드 패널이 열리고 해당 에이전트의 최근 메시지, 연결된 에이전트, 상태 변화, 실행 로그 요약을 확인할 수 있다.",
+        "엣지 클릭 시 두 에이전트 간 최근 상호작용 내역을 확인할 수 있다.",
+        "맵 상단에는 필터를 제공한다. 예: 전체 / 활성 / 오류 / 처리 중 / 특정 역할.",
+        "확대, 축소, 드래그, 미니맵, 자동 정렬 기능을 제공한다.",
+        "메시징 모드에서 특정 메시지를 클릭하면 Map 모드에서 관련 에이전트 노드가 하이라이트된다.",
+        "Map 모드에서 특정 노드를 클릭하면 Messaging 모드에서 해당 에이전트의 메시지 스레드로 이동할 수 있다."
       ],
-      "evidence": [],
-      "notes": "작업 지향 채팅과 병렬로 제공되는 핵심 UI."
+      "ux_requirements": [
+        "Slack/Twist 스타일 메시징 UI와 동일한 디자인 시스템을 유지한다.",
+        "토폴로지 맵은 기술적인 시스템 다이어그램처럼 보이되, 사용자가 에이전트들의 현재 상황을 직관적으로 파악할 수 있어야 한다.",
+        "중요 이벤트가 발생한 노드는 pulse animation 또는 subtle glow로 강조한다.",
+        "처리 중인 에이전트는 로딩/스피너/진행 상태를 시각적으로 보여준다.",
+        "오류 상태의 에이전트는 과도하게 경고스럽지 않게 표시하되 즉시 인지 가능해야 한다.",
+        "노드와 엣지가 많아져도 화면이 복잡해지지 않도록 그룹핑, 클러스터링, 필터링을 제공한다."
+      ],
+      "map_node_model": {
+        "agent_id": "string",
+        "agent_name": "string",
+        "agent_role": "string",
+        "agent_type": "monitor | planner | inspector | coordinator | executor | custom",
+        "status": "active | processing | idle | error",
+        "workspace_id": "string",
+        "last_message_at": "datetime",
+        "recent_message_count": "number",
+        "recent_event_count": "number",
+        "position": {
+          "x": "number",
+          "y": "number"
+        }
+      },
+      "map_edge_model": {
+        "source_agent_id": "string",
+        "target_agent_id": "string",
+        "relation_type": "message | dependency | supervision | data_flow | alert",
+        "status": "active | recent | idle | error",
+        "last_interaction_at": "datetime",
+        "message_count": "number"
+      },
+      "verification": [
+        "1. 워크스페이스 상세페이지에서 Messaging / Map 토글이 정상 표시된다.",
+        "2. Map 토글 클릭 시 React Flow/D3.js 기반 토폴로지 맵 컴포넌트가 정상 마운트된다.",
+        "3. 에이전트 노드가 상태별 스타일(active / processing / idle / error)로 구분되어 표시된다.",
+        "4. 동일 역할 에이전트가 여러 개 있을 때 각각 별도 노드로 표시된다.",
+        "5. 에이전트 노드 클릭 시 우측 사이드 패널에 최근 상호작용 내역이 로드된다.",
+        "6. 엣지 클릭 시 두 에이전트 간 최근 메시지 또는 이벤트 흐름이 표시된다.",
+        "7. 메시징 모드의 특정 메시지와 맵의 특정 노드가 상호 하이라이트된다.",
+        "8. 필터, 줌, 드래그, 미니맵, 자동 정렬 기능이 정상 동작한다.",
+        "9. 노드 수가 50개 이상이어도 UI가 깨지지 않고 탐색 가능하다."
+      ],
+      "evidence": [
+        "frontend/src/pages/WorkspacePage.tsx: 워크스페이스 상세 헤더에 Messaging / Map 토글 추가",
+        "React Flow 기반 토폴로지 맵 렌더링: nodes, edges, Background, Controls, MiniMap",
+        "동일 에이전트 수량(quantity)을 개별 노드 #1/#2/#3 형태로 확장 표시",
+        "상태 필터(all/active/processing/idle/error), 노드 클릭 인스펙터, 엣지 클릭 관계 요약 구현",
+        "cd frontend && npm run build"
+      ],
+      "notes": "작업 지향 채팅과 병렬로 제공되는 핵심 UI. 이 맵은 단순 시각화가 아니라 워크스페이스 내 에이전트 메시 구조와 상황 인식을 보여주는 관제형 인터페이스다. 초기 구현은 React Flow를 우선 권장하며, 이후 대규모 그래프나 복잡한 레이아웃이 필요할 경우 D3.js 또는 force-directed layout으로 확장한다."
     },
     {
       "id": "PH3-ui-consumer-002",
       "priority": 10,
       "area": "consumer_wb",
-      "title": "공유 워크스페이스 및 목표(Goal) 오케스트레이션",
-      "user_visible_behavior": "여러 에이전트가 단일 목표를 위해 대화하고 작업하는 과정을 하나의 워크스페이스에서 실시간으로 관찰하고 개입할 수 있다.",
-      "status": "not_started",
-      "verification": [
-        "1. 워크스페이스 생성 및 다중 에이전트 초대 API 검증",
-        "2. 특정 목표(Goal) 설정 시 CONVERSATIONS 활성화 여부 확인"
+      "title": "워크스페이스 목표(Goal) 기반 오케스트레이션 및 실시간 협업 관찰",
+      "user_visible_behavior": "사용자는 하나의 워크스페이스 안에서 전체 목표와 하위 목표를 설정하고, 각 목표를 수행하는 에이전트들의 대화·작업·상태 변화를 실시간으로 관찰할 수 있다. 필요 시 운영자/개발자는 목표 진행에 개입하거나 워크스페이스를 삭제할 수 있다.",
+      "status": "passing",
+      "implementation_decision": "구현 권장. 다만 초기 버전에서는 복잡한 자동 오케스트레이션보다 Goal 생성, 하위 Goal 생성, Goal별 Conversation/Thread 연결, 실시간 상태 표시를 우선 구현한다.",
+      "core_concept": {
+        "workspace": "특정 환경 전체를 관리하는 단위. 예: 자동차 공장, 도시 데이터, 물류센터.",
+        "goal": "워크스페이스 안에서 에이전트들이 함께 달성해야 하는 상위 목표.",
+        "sub_goal": "상위 목표를 분해한 하위 작업 단위.",
+        "conversation": "Goal 또는 Sub Goal을 중심으로 생성되는 에이전트 대화 공간.",
+        "thread": "특정 Sub Goal 단위의 세부 대화 흐름."
+      },
+      "functional_requirements": [
+        "워크스페이스 상세페이지에서 Goal 생성 버튼을 제공한다.",
+        "Goal 생성 시 목표 이름, 설명, 우선순위, 담당 에이전트, 종료 조건을 입력할 수 있다.",
+        "하나의 Workspace는 여러 개의 Goal을 가질 수 있다.",
+        "하나의 Goal은 여러 개의 Sub Goal을 가질 수 있다.",
+        "Goal 생성 시 해당 Goal 전용 Conversation이 자동 생성된다.",
+        "Sub Goal 생성 시 해당 Sub Goal 전용 Thread 또는 Channel이 생성된다.",
+        "사용자는 Goal별로 진행 중인 에이전트 대화, 상태, 최근 이벤트를 확인할 수 있다.",
+        "Goal 상태는 pending / running / blocked / completed / failed 로 관리한다.",
+        "Sub Goal 상태도 독립적으로 관리한다.",
+        "Goal 또는 Sub Goal에 연결된 에이전트 목록을 확인할 수 있다.",
+        "운영자와 개발자는 Goal을 수정, 중단, 재시작할 수 있다.",
+        "운영자와 개발자는 워크스페이스를 삭제할 수 있다.",
+        "관리자는 기본적으로 워크스페이스 삭제 권한이 없다.",
+        "실시간 피드는 WebSocket 또는 SSE 기반으로 업데이트한다."
       ],
-      "evidence": [],
-      "notes": "WebSocket 또는 SSE를 통한 실시간 피드 업데이트 필수."
+      "mvp_scope": [
+        "Goal 생성",
+        "Sub Goal 생성",
+        "Goal별 Conversation 자동 생성",
+        "Sub Goal별 Thread 생성",
+        "Goal 상태 표시",
+        "에이전트 메시지 실시간 표시",
+        "운영자/개발자 워크스페이스 삭제 권한",
+        "Goal별 메시징 UI 필터링"
+      ],
+      "deferred_scope": [
+        "에이전트 자동 목표 분해",
+        "Goal dependency graph",
+        "에이전트 자동 재배치",
+        "실패 Goal 자동 복구",
+        "LLM 기반 Goal 진행률 요약",
+        "환경 설정 기반 에이전트 행동 제어"
+      ],
+      "ui_requirements": [
+        "워크스페이스 상세 뷰는 Slack/Twist 스타일 메시징 UI를 유지한다.",
+        "좌측 사이드바에 Goals 섹션을 추가한다.",
+        "Goals 섹션에는 전체 목표와 하위 목표가 트리 구조로 표시된다.",
+        "Goal 클릭 시 중앙 메시징 패널이 해당 Goal Conversation으로 전환된다.",
+        "Sub Goal 클릭 시 해당 Thread 또는 Channel로 이동한다.",
+        "상단 헤더에는 현재 Goal 이름, 상태, 진행률, 담당 에이전트 수를 표시한다.",
+        "우측 인스펙터 패널에는 Goal 상세 정보, 연결 에이전트, 최근 이벤트, 종료 조건을 표시한다.",
+        "Goal 상태 변화는 실시간으로 반영된다.",
+        "blocked 또는 failed 상태의 Goal은 눈에 띄지만 과도하지 않은 방식으로 강조한다."
+      ],
+      "data_model": {
+        "workspace": {
+          "workspace_id": "string",
+          "name": "string",
+          "description": "string",
+          "created_by": "user_id",
+          "status": "active | archived | deleted"
+        },
+        "goal": {
+          "goal_id": "string",
+          "workspace_id": "string",
+          "title": "string",
+          "description": "string",
+          "priority": "low | medium | high | critical",
+          "status": "pending | running | blocked | completed | failed",
+          "assigned_agent_ids": ["agent_id"],
+          "conversation_id": "string",
+          "parent_goal_id": "string | null",
+          "success_criteria": "string",
+          "created_at": "datetime",
+          "updated_at": "datetime"
+        },
+        "conversation": {
+          "conversation_id": "string",
+          "workspace_id": "string",
+          "goal_id": "string",
+          "type": "workspace | goal | sub_goal",
+          "title": "string",
+          "status": "active | archived"
+        },
+        "message": {
+          "message_id": "string",
+          "conversation_id": "string",
+          "sender_type": "agent | user | system",
+          "sender_id": "string",
+          "content": "string",
+          "metadata": "object",
+          "created_at": "datetime"
+        }
+      },
+      "permissions": {
+        "developer": [
+          "create_workspace",
+          "delete_workspace",
+          "create_goal",
+          "edit_goal",
+          "stop_goal",
+          "restart_goal",
+          "create_sub_goal",
+          "delete_sub_goal"
+        ],
+        "operator": [
+          "create_workspace",
+          "delete_workspace",
+          "create_goal",
+          "edit_goal",
+          "stop_goal",
+          "restart_goal",
+          "create_sub_goal",
+          "delete_sub_goal"
+        ],
+        "evaluator": [
+          "view_workspace",
+          "request_workspace_access",
+          "view_goal",
+          "comment_on_goal"
+        ],
+        "admin": [
+          "view_assigned_workspace",
+          "request_workspace_access",
+          "view_goal"
+        ]
+      },
+      "realtime_requirements": [
+        "새 메시지 생성 시 실시간 피드에 즉시 반영한다.",
+        "Goal 상태 변경 시 헤더와 사이드바 상태 배지가 즉시 업데이트된다.",
+        "Sub Goal 생성/삭제 시 좌측 Goal 트리가 즉시 갱신된다.",
+        "에이전트 활성 상태 변경 시 사이드바와 토폴로지 맵에 동시에 반영된다.",
+        "초기 구현은 SSE를 우선 고려하고, 양방향 제어가 많아질 경우 WebSocket으로 확장한다."
+      ],
+      "verification": [
+        "1. 워크스페이스 내부에서 Goal 생성이 가능하다.",
+        "2. Goal 생성 시 해당 Goal 전용 Conversation이 자동 생성된다.",
+        "3. Goal 아래에 Sub Goal 생성 및 삭제가 가능하다.",
+        "4. Sub Goal 생성 시 해당 Thread 또는 Channel이 생성된다.",
+        "5. Goal 클릭 시 해당 Goal의 Conversation 메시지가 중앙 패널에 표시된다.",
+        "6. Sub Goal 클릭 시 해당 Sub Goal Thread로 이동한다.",
+        "7. Goal 상태 변경이 사이드바, 헤더, 우측 패널에 실시간 반영된다.",
+        "8. 에이전트 메시지가 WebSocket 또는 SSE를 통해 실시간으로 추가된다.",
+        "9. 운영자와 개발자는 워크스페이스 삭제가 가능하다.",
+        "10. 관리자는 워크스페이스 삭제 버튼을 볼 수 없다.",
+        "11. 삭제된 워크스페이스는 일반 사용자 목록에서 보이지 않는다."
+      ],
+      "evidence": [
+        "backend/app/models/workspace.py: Goal에 parent_goal_id, conversation_id, priority, assigned_agent_ids, success_criteria, pending/running/blocked/completed/failed 상태 추가",
+        "backend/app/api/v1/workspaces.py: Goal 생성/수정/list API, Goal 생성 시 Conversation 자동 생성, 워크스페이스 삭제 API 구현",
+        "frontend/src/pages/WorkspacePage.tsx: 좌측 Goals 트리, Goal 생성 폼, Goal 상태 변경, Goal별 메시지 필터링 UI 구현",
+        "API smoke test: Goal 생성 후 conversation_id=0ac0736b-13f9-4df3-a5d2-ea6358a21804 자동 생성, state running 업데이트 확인",
+        "cd backend && uv run alembic upgrade head",
+        "cd frontend && npm run build"
+      ],
+      "notes": "초기 구현은 WebSocket/SSE 대신 Goal 생성·상태 변경·메시지 전송 후 즉시 재조회하는 방식으로 반영한다. 장기 운영에서는 Goal별 SSE 스트림과 서버 측 오케스트레이션 집계 API가 필요하다."
     },
     {
       "id": "PH3-ui-creator-002",

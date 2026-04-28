@@ -16,7 +16,7 @@ from app.db.session import get_db
 from app.models.agent import Agent
 from app.models.conversation import Conversation
 from app.models.user import User
-from app.models.workspace import Workspace
+from app.models.workspace import Workspace, WorkspaceMember
 from app.schemas.message import (
     MESSAGE_PRIORITIES,
     MESSAGE_SCOPES,
@@ -30,6 +30,8 @@ from app.services.message_broker import publish_message_header, route_workspace_
 
 
 router = APIRouter(prefix="/messages", tags=["messages"])
+
+WORKSPACE_SYSTEM_ROLES = {"agent_owner", "agent_engineer", "trust_ops", "release_manager"}
 
 
 def _ensure_valid_publish_payload(payload: PublishMessageRequest) -> None:
@@ -71,7 +73,17 @@ async def _ensure_workspace_access(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="workspace_id 에 해당하는 워크스페이스를 찾을 수 없습니다.",
         )
-    if workspace.owner_id != current_user.user_id:
+    if workspace.owner_id == current_user.user_id or set(current_user.roles).intersection(WORKSPACE_SYSTEM_ROLES):
+        return
+    member = (
+        await db.execute(
+            select(WorkspaceMember).where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.user_id == current_user.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if member is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="이 워크스페이스에 메시지를 발행할 권한이 없습니다.",

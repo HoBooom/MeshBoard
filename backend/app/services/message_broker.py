@@ -61,10 +61,7 @@ async def publish_message_header(
     return header
 
 
-def _rule_matches_message(
-    rule: AgentSubscriptionRule,
-    header: MessageHeader,
-) -> tuple[bool, str]:
+def _rule_matches(rule: AgentSubscriptionRule, header: MessageHeader) -> tuple[bool, str]:
     if not rule.is_active:
         return False, "subscription rule inactive"
     if rule.ignore_senders and header.sender_id in rule.ignore_senders:
@@ -82,11 +79,8 @@ def _rule_matches_message(
     return True, "matched subscription rule"
 
 
-async def route_workspace_message(
-    db: AsyncSession,
-    header: MessageHeader,
-) -> dict:
-    """workspace scope 메시지를 큐에 등록하고 구독 중인 에이전트 receipt 를 생성합니다."""
+async def route_workspace_message(db: AsyncSession, header: MessageHeader) -> dict:
+    """워크스페이스 메시지를 Slack형 메시지 큐와 구독 receipt 로 라우팅합니다."""
     if header.workspace_id is None:
         return {
             "queued": False,
@@ -96,25 +90,21 @@ async def route_workspace_message(
             "ignored_agent_ids": [],
         }
 
-    queued_message = Message(
-        message_id=header.message_id,
-        workspace_id=header.workspace_id,
-        conversation_id=header.conversation_id,
-        participant_id=header.sender_id,
-        participant_type=header.sender_type,
-        content=header.body_ref,
+    db.add(
+        Message(
+            message_id=header.message_id,
+            workspace_id=header.workspace_id,
+            conversation_id=header.conversation_id,
+            participant_id=header.sender_id,
+            participant_type=header.sender_type,
+            content=header.body_ref,
+        )
     )
-    db.add(queued_message)
-
     result = await db.execute(
         select(WorkspaceAgent.agent_id, AgentSubscriptionRule)
-        .outerjoin(
-            AgentSubscriptionRule,
-            AgentSubscriptionRule.agent_id == WorkspaceAgent.agent_id,
-        )
+        .outerjoin(AgentSubscriptionRule, AgentSubscriptionRule.agent_id == WorkspaceAgent.agent_id)
         .where(WorkspaceAgent.workspace_id == header.workspace_id)
     )
-
     matched_agent_ids = []
     ignored_agent_ids = []
     receipt_ids = []
@@ -122,16 +112,11 @@ async def route_workspace_message(
         if rule is None:
             ignored_agent_ids.append(agent_id)
             continue
-        matched, reason = _rule_matches_message(rule, header)
+        matched, reason = _rule_matches(rule, header)
         if not matched:
             ignored_agent_ids.append(agent_id)
             continue
-        receipt = MessageReceipt(
-            message_id=header.message_id,
-            agent_id=agent_id,
-            decision="consumed",
-            reason=reason,
-        )
+        receipt = MessageReceipt(message_id=header.message_id, agent_id=agent_id, decision="consumed", reason=reason)
         db.add(receipt)
         await db.flush()
         matched_agent_ids.append(agent_id)

@@ -59,8 +59,6 @@ class MessageHeaderRead(BaseModel):
 
 
 class RoutingSummary(BaseModel):
-    """메시지 발행 후 워크스페이스 라우팅 결과."""
-
     queued: bool = False
     queue_message_id: Optional[UUID] = None
     matched_agent_ids: List[UUID] = Field(default_factory=list)

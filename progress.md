@@ -215,3 +215,103 @@
 - **Known risk or unresolved issue**:
   - 현재 단계는 브로커 기록까지이며, 구독 규칙 매칭/큐 등록/receipt 생성은 PH3-mesh-002 범위로 남김.
 - **Next best step**: `PH3-mesh-002` — 에이전트 구독 규칙 및 라우팅 엔진 구현
+
+### Session 007
+- **Date**: 2026-04-28
+- **Goal**: PH3-mesh-002 — 환경 단위 워크스페이스와 에이전트 메시 구조 재정의
+- **Completed**:
+  - 워크스페이스를 자동차 공장 전체/도시 데이터 같은 환경 단위로 재정의하고 `description`, `tags`를 추가
+  - `workspace_agents`에 `quantity`를 추가해 동일 특화 에이전트를 여러 인스턴스로 배치 가능하게 구현
+  - `workspace_members`, `workspace_access_requests`로 접근 권한 신청/승인/반려 흐름 추가
+  - 개발자/운영자는 전체 워크스페이스 접근 및 생성 가능, 운영자/평가자는 권한 신청 승인 가능하도록 API 권한 모델 반영
+  - 워크스페이스 메시지 발행 시 `MESSAGE_HEADERS` 기록과 함께 `MESSAGES` 큐 등록, 구독 규칙 기반 `MESSAGE_RECEIPTS` 생성
+  - `/dashboard/workspaces` 페이지 추가: 목록 카드 그리드, Empty State의 권한 신청 탐색 UI, 생성 Wizard, Slack/Twist형 상세 메시징 뷰
+  - 생성 Wizard에 기본 정보, 마켓플레이스 분할 뷰, 배치 바구니 수량 조절, 인라인 에이전트 초안 생성, 환경 구성 Coming Soon 영역 구현
+  - 기존 `/dashboard/marketplace`는 `/dashboard/workspaces`로 리다이렉트하고 사이드바 메뉴를 워크스페이스로 변경
+- **Verification run**:
+  - ✅ `cd backend && uv run python -m compileall app/models/workspace.py app/schemas/workspace.py app/api/v1/workspaces.py app/api/v1/messages.py app/services/message_broker.py app/main.py`
+  - ✅ `cd backend && uv run alembic upgrade head`
+  - ✅ `cd frontend && npm run build`
+  - ✅ 개발자 계정 로그인 후 `GET /api/v1/workspaces` smoke test: `workspace_count=8`, `access_status=system`, `user_can_access=true`
+  - ✅ ReadLints: 수정 파일 linter error 없음
+- **Evidence captured**:
+  - 워크스페이스 목록 응답 키: `placements`, `active_agent_count`, `recent_message_count`, `access_status`, `user_can_access`, `user_can_manage`
+  - 프론트엔드 production build 성공: `97 modules transformed`
+- **Commits**: 미커밋
+- **Files or artifacts updated**:
+  - `backend/app/models/workspace.py`, `backend/app/models/__init__.py`
+  - `backend/alembic/versions/003_workspace_environment.py`, `backend/alembic/versions/006_workspace_member_creator.py`
+  - `backend/app/schemas/workspace.py`, `backend/app/schemas/message.py`
+  - `backend/app/api/v1/workspaces.py`, `backend/app/api/v1/messages.py`, `backend/app/main.py`
+  - `backend/app/services/message_broker.py`
+  - `frontend/src/api/workspaces.ts`, `frontend/src/pages/WorkspacePage.tsx`
+  - `frontend/src/App.tsx`, `frontend/src/layouts/DashboardLayout.tsx`
+  - `feature_list.json`, `progress.md`
+- **Known risk or unresolved issue**:
+  - 현재 메시지 라우팅은 API 요청 내 동기 처리이며, 장기 실행 에이전트 소비/비동기 워커는 후속 단계에서 분리 필요.
+  - 로컬 DB가 이전 실험 리비전 `006_workspace_member_creator`를 가리키고 있어 Alembic 호환 marker migration을 추가함.
+- **Next best step**: `PH3-ui-consumer-001` — 워크스페이스 기반 에이전트 토폴로지 맵 시각화
+
+### Session 008
+- **Date**: 2026-04-28
+- **Goal**: PH3-ui-consumer-001 — 상황 인식 기반 에이전트 토폴로지 맵
+- **Completed**:
+  - 워크스페이스 상세 중앙 헤더에 `Messaging / Map` 토글 추가
+  - Map 모드에 React Flow 기반 에이전트 노드/엣지 그래프 렌더링 추가
+  - 에이전트 배치 수량(`quantity`)을 개별 노드(`#1`, `#2`, `#3`)로 확장해 동일 역할 복수 인스턴스 표현
+  - 노드에 에이전트 이름, 타입, 상태, 최근 메시지 수, 이벤트 수 표시
+  - 상태 필터(`all`, `active`, `processing`, `idle`, `error`)와 React Flow `Background`, `Controls`, `MiniMap` 연결
+  - 메시지 흐름 기반 엣지를 생성하고, 메시지 흐름이 없을 때 supervision/data_flow fallback 엣지 제공
+  - 노드 클릭 시 우측 Inspector에 에이전트 구성/상태/메시지·이벤트 수 표시
+  - 엣지 클릭 시 우측 Inspector에 relation/source/target 관계 요약 표시
+  - 메시징 모드에서 선택된 에이전트와 Map 노드가 상호 하이라이트되도록 연결
+- **Verification run**:
+  - ✅ `cd frontend && npm run build`
+  - ✅ ReadLints: `frontend/src/pages/WorkspacePage.tsx` linter error 없음
+- **Evidence captured**:
+  - 프론트엔드 production build 성공: `257 modules transformed`
+  - React Flow bundle 포함 후 빌드 산출 크기 확인: JS gzip 약 `150.98 kB`
+- **Commits**: 미커밋
+- **Files or artifacts updated**:
+  - `frontend/package.json`, `frontend/package-lock.json`
+  - `frontend/src/pages/WorkspacePage.tsx`
+  - `feature_list.json`, `progress.md`
+- **Known risk or unresolved issue**:
+  - 현재 노드/엣지는 워크스페이스 상세 응답의 placements/messages에서 프론트에서 파생한다. 대규모 그래프 운영 단계에서는 별도 topology API와 서버 측 집계가 필요.
+- **Next best step**: `PH3-ui-consumer-002` — 공유 워크스페이스 및 목표(Goal) 오케스트레이션
+
+### Session 009
+- **Date**: 2026-04-28
+- **Goal**: PH3-ui-consumer-002 — 워크스페이스 목표(Goal) 기반 오케스트레이션 및 협업 관찰
+- **Completed**:
+  - `Goal` 모델을 상위/하위 Goal 트리 구조로 확장: `parent_goal_id`, `conversation_id`, `priority`, `assigned_agent_ids`, `success_criteria`, `pending/running/blocked/completed/failed` 상태
+  - Alembic migration `007_goal_orchestration.py` 추가 및 적용
+  - Goal 생성 시 전용 `Conversation` 자동 생성, Sub Goal 생성 시 `parent_goal_id`가 있는 thread 성격의 Conversation 생성
+  - 워크스페이스 상세 응답에 `goals` 포함, Goal별 메시지 조회를 위해 `conversation_id` 필터 지원
+  - Goal 생성/list/update API 및 운영자/개발자용 워크스페이스 삭제 API 추가
+  - 워크스페이스 상세 좌측 사이드바에 Goals 트리 추가: workspace-wide, 상위 Goal, Sub Goal 표시
+  - Goal 생성 폼 추가: 이름, 설명, 상위 Goal, 우선순위, 담당 에이전트, 종료 조건 입력
+  - Goal 클릭 시 중앙 메시징 패널이 해당 Goal Conversation 메시지로 전환
+  - Goal 상태 변경 UI 추가: pending/running/blocked/completed/failed 변경 시 헤더와 Inspector에 즉시 반영
+  - Goal 선택 시 우측 Inspector에 상태, 진행률, 담당 에이전트 수, 종료 조건 표시
+- **Verification run**:
+  - ✅ `cd backend && uv run python -m compileall app/models/workspace.py app/schemas/workspace.py app/api/v1/workspaces.py`
+  - ✅ `cd backend && uv run alembic upgrade head`
+  - ✅ Goal API smoke test: Goal 생성 시 `conversation_id` 자동 생성, `state=running` 업데이트 확인
+  - ✅ `cd frontend && npm run build`
+  - ✅ ReadLints: 수정 파일 linter error 없음
+- **Evidence captured**:
+  - API smoke output: `goal_id=cf98ae2e-5328-4860-a7f0-2c68fd62c302`, `conversation_id=0ac0736b-13f9-4df3-a5d2-ea6358a21804`, `updated_state=running`, `progress=45`
+  - 프론트엔드 production build 성공: `257 modules transformed`
+- **Commits**: 미커밋
+- **Files or artifacts updated**:
+  - `backend/app/models/workspace.py`
+  - `backend/alembic/versions/007_goal_orchestration.py`
+  - `backend/app/schemas/workspace.py`
+  - `backend/app/api/v1/workspaces.py`
+  - `frontend/src/api/workspaces.ts`
+  - `frontend/src/pages/WorkspacePage.tsx`
+  - `feature_list.json`, `progress.md`
+- **Known risk or unresolved issue**:
+  - 실시간 업데이트는 현재 WebSocket/SSE가 아니라 API 요청 후 재조회 방식이다. Goal별 SSE 스트림은 후속 실시간 단계에서 분리 구현 필요.
+- **Next best step**: `PH3-ui-creator-002` — 시나리오 기반 시뮬레이션 환경(Sandbox)
