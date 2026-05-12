@@ -29,14 +29,14 @@ SEED_USERS = [
         "email": "dev@meshboard.io",
         "login_id": "developer",
         "password": "dev1234",
-        "roles": ["agent_owner", "agent_engineer", "trust_ops", "release_manager"],
+        "roles": ["agent_owner", "agent_engineer"],
     },
     {
         "name": "운영자",
         "email": "ops@meshboard.io",
         "login_id": "operator",
         "password": "ops1234",
-        "roles": ["trust_ops", "release_manager", "agent_owner", "agent_engineer"],
+        "roles": ["trust_ops", "release_manager"],
     },
     {
         "name": "평가자",
@@ -58,18 +58,26 @@ async def seed_users(session: AsyncSession) -> None:
         user = result.scalar_one_or_none()
         if user:
             role_result = await session.execute(
-                select(UserRole.role).where(UserRole.user_id == user.user_id)
+                select(UserRole).where(UserRole.user_id == user.user_id)
             )
-            existing_roles = set(role_result.scalars().all())
+            existing_role_entries = list(role_result.scalars().all())
+            existing_roles = {entry.role for entry in existing_role_entries}
+            target_roles = set(user_data["roles"])
+            stale_roles = [
+                entry for entry in existing_role_entries if entry.role not in target_roles
+            ]
+            for role_entry in stale_roles:
+                await session.delete(role_entry)
             missing_roles = [
                 role for role in user_data["roles"] if role not in existing_roles
             ]
             for role in missing_roles:
                 session.add(UserRole(user_id=user.user_id, role=role))
-            if missing_roles:
+            if stale_roles or missing_roles:
                 print(
-                    f"  🔄 역할 추가: {user_data['email']} "
-                    f"({', '.join(missing_roles)})"
+                    f"  🔄 역할 동기화: {user_data['email']} "
+                    f"(추가: {', '.join(missing_roles) or '-'} / "
+                    f"제거: {', '.join(entry.role for entry in stale_roles) or '-'})"
                 )
             else:
                 print(f"  ⏭  이미 존재: {user_data['email']}")

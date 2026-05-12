@@ -31,8 +31,6 @@ from app.services.message_broker import publish_message_header, route_workspace_
 
 router = APIRouter(prefix="/messages", tags=["messages"])
 
-WORKSPACE_SYSTEM_ROLES = {"agent_owner", "agent_engineer", "trust_ops", "release_manager"}
-
 
 def _ensure_valid_publish_payload(payload: PublishMessageRequest) -> None:
     if payload.priority not in MESSAGE_PRIORITIES:
@@ -73,7 +71,7 @@ async def _ensure_workspace_access(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="workspace_id 에 해당하는 워크스페이스를 찾을 수 없습니다.",
         )
-    if workspace.owner_id == current_user.user_id or set(current_user.roles).intersection(WORKSPACE_SYSTEM_ROLES):
+    if workspace.owner_id == current_user.user_id:
         return
     member = (
         await db.execute(

@@ -16,12 +16,28 @@ export interface Workspace {
   created_at: string;
   updated_at: string;
   placements: WorkspacePlacement[];
+  agent_count: number;
+  user_count: number;
+  recent_activity_count: number;
   active_agent_count: number;
   recent_message_count: number;
   access_status: 'system' | 'owner' | 'approved' | 'pending' | 'none';
   pending_request_id?: string | null;
   user_can_access: boolean;
   user_can_manage: boolean;
+}
+
+export interface WorkspaceJoinable {
+  workspace_id: string;
+  name?: string | null;
+  description?: string | null;
+  tags: string[];
+  state: string;
+  agent_count: number;
+  user_count: number;
+  recent_activity_count: number;
+  access_status: 'system' | 'owner' | 'approved' | 'pending' | 'none';
+  user_can_access: boolean;
 }
 
 export interface WorkspaceMessage {
@@ -39,6 +55,17 @@ export interface WorkspaceMessage {
   processed_count: number;
   queued: boolean;
   receipt_count: number;
+}
+
+export interface WorkspaceNode {
+  node_id: string;
+  workspace_id: string;
+  node_type: 'user' | 'agent';
+  ref_id: string;
+  display_name: string;
+  status: 'active' | 'idle' | 'processing' | 'error';
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Goal {
@@ -61,6 +88,7 @@ export interface Goal {
 export interface WorkspaceDetail extends Workspace {
   messages: WorkspaceMessage[];
   goals: Goal[];
+  nodes: WorkspaceNode[];
 }
 
 export interface WorkspaceAccessRequest {
@@ -103,6 +131,11 @@ export const workspacesApi = {
     return res.data;
   },
 
+  listJoinable: async (): Promise<WorkspaceJoinable[]> => {
+    const res = await client.get<WorkspaceJoinable[]>('/workspaces/joinable');
+    return res.data;
+  },
+
   get: async (workspaceId: string): Promise<WorkspaceDetail> => {
     const res = await client.get<WorkspaceDetail>(`/workspaces/${workspaceId}`);
     return res.data;
@@ -122,6 +155,13 @@ export const workspacesApi = {
     return res.data;
   },
 
+  join: async (workspaceId: string, accessCode: string): Promise<Workspace> => {
+    const res = await client.post<Workspace>(`/workspaces/${workspaceId}/join`, {
+      access_code: accessCode,
+    });
+    return res.data;
+  },
+
   updateAgents: async (
     workspaceId: string,
     agentPlacements: Array<{ agent_id: string; quantity: number }>
@@ -136,6 +176,11 @@ export const workspacesApi = {
     const res = await client.get<WorkspaceMessage[]>(`/workspaces/${workspaceId}/messages`, {
       params: conversationId ? { conversation_id: conversationId } : undefined,
     });
+    return res.data;
+  },
+
+  listNodes: async (workspaceId: string): Promise<WorkspaceNode[]> => {
+    const res = await client.get<WorkspaceNode[]>(`/workspaces/${workspaceId}/nodes`);
     return res.data;
   },
 

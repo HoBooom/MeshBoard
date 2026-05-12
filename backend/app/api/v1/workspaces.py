@@ -22,6 +22,7 @@ from app.models.workspace import (
     WorkspaceAccessRequest,
     WorkspaceAgent,
     WorkspaceMember,
+    WorkspaceNode,
 )
 from app.schemas.agent import AgentRead
 from app.schemas.workspace import (
@@ -35,7 +36,10 @@ from app.schemas.workspace import (
     WorkspaceAgentRead,
     WorkspaceCreate,
     WorkspaceDetailRead,
+    WorkspaceJoinableRead,
+    WorkspaceJoinRequest,
     WorkspaceMessageRead,
+    WorkspaceNodeRead,
     WorkspaceRead,
     WorkspaceUpdateAgents,
 )
@@ -45,6 +49,7 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 CREATOR_ROLES = {"agent_owner", "agent_engineer", "trust_ops", "release_manager"}
 GRANT_ROLES = {"trust_ops", "release_manager", "evaluator"}
+WORKSPACE_JOIN_CODE = "1234"
 
 
 def _has_any_role(user: User, roles: set[str]) -> bool:
@@ -69,13 +74,6 @@ async def _load_workspace(db: AsyncSession, workspace_id: UUID) -> Workspace:
 
 
 async def _access_meta(db: AsyncSession, workspace: Workspace, user: User) -> dict:
-    if _can_create_workspace(user):
-        return {
-            "access_status": "system",
-            "pending_request_id": None,
-            "user_can_access": True,
-            "user_can_manage": True,
-        }
     if workspace.owner_id == user.user_id:
         return {
             "access_status": "owner",
@@ -96,7 +94,7 @@ async def _access_meta(db: AsyncSession, workspace: Workspace, user: User) -> di
             "access_status": "approved",
             "pending_request_id": None,
             "user_can_access": True,
-            "user_can_manage": False,
+            "user_can_manage": member.role in {"developer", "operator"},
         }
     request = (
         await db.execute(
@@ -184,6 +182,87 @@ async def _replace_placements(db: AsyncSession, workspace: Workspace, placements
     workspace.updated_at = datetime.now(timezone.utc)
 
 
+async def _sync_workspace_nodes(db: AsyncSession, workspace: Workspace) -> None:
+    now = datetime.now(timezone.utc)
+    member_user_ids = (
+        await db.execute(
+            select(WorkspaceMember.user_id).where(WorkspaceMember.workspace_id == workspace.workspace_id)
+        )
+    ).scalars().all()
+    user_ids = set(member_user_ids)
+    user_ids.add(workspace.owner_id)
+
+    users = (
+        await db.execute(select(User).where(User.user_id.in_(user_ids)))
+    ).scalars().all() if user_ids else []
+    agents = (
+        await db.execute(
+            select(Agent)
+            .join(WorkspaceAgent, WorkspaceAgent.agent_id == Agent.agent_id)
+            .where(WorkspaceAgent.workspace_id == workspace.workspace_id)
+        )
+    ).scalars().all()
+
+    current_agent_ids = {agent.agent_id for agent in agents}
+    if current_agent_ids:
+        await db.execute(
+            delete(WorkspaceNode).where(
+                WorkspaceNode.workspace_id == workspace.workspace_id,
+                WorkspaceNode.node_type == "agent",
+                WorkspaceNode.ref_id.not_in(current_agent_ids),
+            )
+        )
+    else:
+        await db.execute(
+            delete(WorkspaceNode).where(
+                WorkspaceNode.workspace_id == workspace.workspace_id,
+                WorkspaceNode.node_type == "agent",
+            )
+        )
+
+    existing = (
+        await db.execute(
+            select(WorkspaceNode).where(WorkspaceNode.workspace_id == workspace.workspace_id)
+        )
+    ).scalars().all()
+    nodes_by_ref = {(node.node_type, node.ref_id): node for node in existing}
+
+    for user in users:
+        key = ("user", user.user_id)
+        node = nodes_by_ref.get(key)
+        if node is None:
+            db.add(
+                WorkspaceNode(
+                    workspace_id=workspace.workspace_id,
+                    node_type="user",
+                    ref_id=user.user_id,
+                    display_name=user.name,
+                    status="active",
+                )
+            )
+        else:
+            node.display_name = user.name
+            node.status = "active"
+            node.updated_at = now
+
+    for agent in agents:
+        key = ("agent", agent.agent_id)
+        node = nodes_by_ref.get(key)
+        if node is None:
+            db.add(
+                WorkspaceNode(
+                    workspace_id=workspace.workspace_id,
+                    node_type="agent",
+                    ref_id=agent.agent_id,
+                    display_name=agent.name,
+                    status="idle",
+                )
+            )
+        else:
+            node.display_name = agent.name
+            node.updated_at = now
+
+
 async def _placement_reads(db: AsyncSession, workspace: Workspace) -> list:
     result = await db.execute(
         select(WorkspaceAgent, Agent)
@@ -195,6 +274,62 @@ async def _placement_reads(db: AsyncSession, workspace: Workspace) -> list:
         WorkspaceAgentRead(agent=AgentRead.model_validate(agent), quantity=placement.quantity)
         for placement, agent in result.all()
     ]
+
+
+async def _node_reads(db: AsyncSession, workspace_id: UUID) -> List[WorkspaceNodeRead]:
+    result = await db.execute(
+        select(WorkspaceNode)
+        .where(WorkspaceNode.workspace_id == workspace_id)
+        .order_by(WorkspaceNode.node_type.desc(), WorkspaceNode.display_name.asc())
+    )
+    return [WorkspaceNodeRead.model_validate(node) for node in result.scalars().all()]
+
+
+async def _joinable_workspace_read(db: AsyncSession, workspace: Workspace, user: User) -> WorkspaceJoinableRead:
+    meta = await _access_meta(db, workspace, user)
+    agent_count = (
+        await db.execute(
+            select(func.coalesce(func.sum(WorkspaceAgent.quantity), 0)).where(
+                WorkspaceAgent.workspace_id == workspace.workspace_id,
+            )
+        )
+    ).scalar_one()
+    member_count = (
+        await db.execute(
+            select(func.count(func.distinct(WorkspaceMember.user_id))).where(
+                WorkspaceMember.workspace_id == workspace.workspace_id,
+            )
+        )
+    ).scalar_one()
+    owner_is_member = (
+        await db.execute(
+            select(func.count(WorkspaceMember.user_id)).where(
+                WorkspaceMember.workspace_id == workspace.workspace_id,
+                WorkspaceMember.user_id == workspace.owner_id,
+            )
+        )
+    ).scalar_one()
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    recent_count = (
+        await db.execute(
+            select(func.count(MessageHeader.message_id)).where(
+                MessageHeader.workspace_id == workspace.workspace_id,
+                MessageHeader.sent_at >= since,
+            )
+        )
+    ).scalar_one()
+    return WorkspaceJoinableRead(
+        workspace_id=workspace.workspace_id,
+        name=workspace.name,
+        description=workspace.description,
+        tags=workspace.tags,
+        state=workspace.state,
+        agent_count=int(agent_count or 0),
+        user_count=int(member_count) + (0 if owner_is_member else 1),
+        recent_activity_count=int(recent_count),
+        access_status=meta["access_status"],
+        user_can_access=meta["user_can_access"],
+    )
 
 
 async def _message_reads(
@@ -270,9 +405,30 @@ async def _goal_reads(db: AsyncSession, workspace_id: UUID) -> List[GoalRead]:
     ]
 
 
-async def _workspace_to_read(db: AsyncSession, workspace: Workspace, user: User) -> WorkspaceRead:
-    meta = await _access_meta(db, workspace, user)
+async def _workspace_to_read(
+    db: AsyncSession,
+    workspace: Workspace,
+    user: User,
+    meta: Optional[dict] = None,
+) -> WorkspaceRead:
+    meta = meta or await _access_meta(db, workspace, user)
     placements = await _placement_reads(db, workspace) if meta["user_can_access"] else []
+    agent_count = sum(item.quantity for item in placements)
+    member_count = (
+        await db.execute(
+            select(func.count(func.distinct(WorkspaceMember.user_id))).where(
+                WorkspaceMember.workspace_id == workspace.workspace_id,
+            )
+        )
+    ).scalar_one()
+    owner_is_member = (
+        await db.execute(
+            select(func.count(WorkspaceMember.user_id)).where(
+                WorkspaceMember.workspace_id == workspace.workspace_id,
+                WorkspaceMember.user_id == workspace.owner_id,
+            )
+        )
+    ).scalar_one()
     since = datetime.now(timezone.utc) - timedelta(hours=24)
     recent_count = (
         await db.execute(
@@ -287,7 +443,10 @@ async def _workspace_to_read(db: AsyncSession, workspace: Workspace, user: User)
         update={
             **meta,
             "placements": placements,
-            "active_agent_count": sum(item.quantity for item in placements),
+            "agent_count": agent_count,
+            "user_count": int(member_count) + (0 if owner_is_member else 1),
+            "recent_activity_count": int(recent_count),
+            "active_agent_count": agent_count,
             "recent_message_count": int(recent_count),
         }
     )
@@ -298,9 +457,27 @@ async def list_workspaces(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """접근 가능한 환경과 신청 가능한 전체 환경을 함께 반환합니다."""
+    """현재 사용자가 접근 가능한 활성 워크스페이스만 반환합니다."""
     result = await db.execute(select(Workspace).where(Workspace.state == "ACTIVE").order_by(Workspace.created_at.desc()))
-    return [await _workspace_to_read(db, workspace, current_user) for workspace in result.scalars().all()]
+    workspace_reads = []
+    for workspace in result.scalars().all():
+        meta = await _access_meta(db, workspace, current_user)
+        if not meta["user_can_access"]:
+            continue
+        workspace_reads.append(await _workspace_to_read(db, workspace, current_user, meta=meta))
+    return workspace_reads
+
+
+@router.get("/joinable", response_model=List[WorkspaceJoinableRead])
+async def list_joinable_workspaces(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """참여 화면에서 전체 활성 워크스페이스를 조회합니다."""
+    result = await db.execute(
+        select(Workspace).where(Workspace.state == "ACTIVE").order_by(Workspace.created_at.desc())
+    )
+    return [await _joinable_workspace_read(db, workspace, current_user) for workspace in result.scalars().all()]
 
 
 @router.post("", response_model=WorkspaceRead, status_code=status.HTTP_201_CREATED)
@@ -331,6 +508,8 @@ async def create_workspace(
         )
     )
     await _replace_placements(db, workspace, payload.agent_placements)
+    await db.flush()
+    await _sync_workspace_nodes(db, workspace)
     await db.flush()
     await db.refresh(workspace)
     return await _workspace_to_read(db, workspace, current_user)
@@ -375,6 +554,9 @@ async def approve_access_request(
             granted_by=current_user.user_id,
         )
     )
+    await db.flush()
+    workspace = await _load_workspace(db, access_request.workspace_id)
+    await _sync_workspace_nodes(db, workspace)
     await db.flush()
     await db.refresh(access_request)
     return WorkspaceAccessRequestRead.model_validate(access_request)
@@ -435,6 +617,44 @@ async def request_access(
     return WorkspaceAccessRequestRead.model_validate(access_request)
 
 
+@router.post("/{workspace_id}/join", response_model=WorkspaceRead)
+async def join_workspace(
+    workspace_id: UUID,
+    payload: WorkspaceJoinRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    workspace = await _load_workspace(db, workspace_id)
+    if workspace.state != "ACTIVE":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="참여 가능한 워크스페이스를 찾을 수 없습니다.")
+    if payload.access_code != WORKSPACE_JOIN_CODE:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="워크스페이스 참여 코드가 올바르지 않습니다.")
+
+    existing_member = (
+        await db.execute(
+            select(WorkspaceMember).where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.user_id == current_user.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_member is None and workspace.owner_id != current_user.user_id:
+        db.add(
+            WorkspaceMember(
+                workspace_id=workspace_id,
+                user_id=current_user.user_id,
+                role="viewer",
+                granted_by=current_user.user_id,
+            )
+        )
+        await db.flush()
+
+    await _sync_workspace_nodes(db, workspace)
+    await db.flush()
+    await db.refresh(workspace)
+    return await _workspace_to_read(db, workspace, current_user)
+
+
 @router.get("/{workspace_id}/messages", response_model=List[WorkspaceMessageRead])
 async def list_workspace_messages(
     workspace_id: UUID,
@@ -446,6 +666,18 @@ async def list_workspace_messages(
     return await _message_reads(db, workspace_id, conversation_id=conversation_id)
 
 
+@router.get("/{workspace_id}/nodes", response_model=List[WorkspaceNodeRead])
+async def list_workspace_nodes(
+    workspace_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    workspace = await _ensure_access(db, workspace_id, current_user)
+    await _sync_workspace_nodes(db, workspace)
+    await db.flush()
+    return await _node_reads(db, workspace_id)
+
+
 @router.get("/{workspace_id}", response_model=WorkspaceDetailRead)
 async def get_workspace(
     workspace_id: UUID,
@@ -454,9 +686,12 @@ async def get_workspace(
 ):
     workspace = await _ensure_access(db, workspace_id, current_user)
     data = await _workspace_to_read(db, workspace, current_user)
+    await _sync_workspace_nodes(db, workspace)
+    await db.flush()
     messages = await _message_reads(db, workspace_id)
     goals = await _goal_reads(db, workspace_id)
-    return WorkspaceDetailRead(**data.model_dump(), messages=messages, goals=goals)
+    nodes = await _node_reads(db, workspace_id)
+    return WorkspaceDetailRead(**data.model_dump(), messages=messages, goals=goals, nodes=nodes)
 
 
 @router.put("/{workspace_id}/agents", response_model=WorkspaceRead)
@@ -469,6 +704,7 @@ async def update_workspace_agents(
     workspace = await _ensure_manage(db, workspace_id, current_user)
     await _load_agents_for_placements(db, payload.agent_placements, current_user)
     await _replace_placements(db, workspace, payload.agent_placements)
+    await _sync_workspace_nodes(db, workspace)
     await db.flush()
     await db.refresh(workspace)
     return await _workspace_to_read(db, workspace, current_user)

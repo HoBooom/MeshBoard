@@ -31,6 +31,10 @@ class WorkspaceUpdateAgents(BaseModel):
     agent_placements: List[WorkspaceAgentPlacement] = Field(default_factory=list)
 
 
+class WorkspaceJoinRequest(BaseModel):
+    access_code: str = Field(..., min_length=1, max_length=32)
+
+
 class WorkspaceAgentRead(BaseModel):
     agent: AgentRead
     quantity: int
@@ -53,6 +57,19 @@ class WorkspaceMessageRead(BaseModel):
     receipt_count: int
 
 
+class WorkspaceNodeRead(BaseModel):
+    node_id: UUID
+    workspace_id: UUID
+    node_type: str
+    ref_id: UUID
+    display_name: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class WorkspaceRead(BaseModel):
     workspace_id: UUID
     name: Optional[str] = None
@@ -63,6 +80,9 @@ class WorkspaceRead(BaseModel):
     created_at: datetime
     updated_at: datetime
     placements: List[WorkspaceAgentRead] = Field(default_factory=list)
+    agent_count: int = 0
+    user_count: int = 0
+    recent_activity_count: int = 0
     active_agent_count: int = 0
     recent_message_count: int = 0
     access_status: str = "none"
@@ -71,6 +91,19 @@ class WorkspaceRead(BaseModel):
     user_can_manage: bool = False
 
     model_config = {"from_attributes": True}
+
+
+class WorkspaceJoinableRead(BaseModel):
+    workspace_id: UUID
+    name: Optional[str] = None
+    description: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    state: str
+    agent_count: int = 0
+    user_count: int = 0
+    recent_activity_count: int = 0
+    access_status: str = "none"
+    user_can_access: bool = False
 
 
 GOAL_PRIORITIES = {"low", "medium", "high", "critical"}
@@ -118,6 +151,7 @@ class GoalRead(BaseModel):
 class WorkspaceDetailRead(WorkspaceRead):
     messages: List[WorkspaceMessageRead] = Field(default_factory=list)
     goals: List[GoalRead] = Field(default_factory=list)
+    nodes: List[WorkspaceNodeRead] = Field(default_factory=list)
 
 
 class WorkspaceAccessRequestCreate(BaseModel):

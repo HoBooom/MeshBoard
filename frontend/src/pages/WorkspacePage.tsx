@@ -21,6 +21,7 @@ import {
   Workspace,
   WorkspaceAccessRequest,
   WorkspaceDetail,
+  WorkspaceJoinable,
   workspacesApi,
 } from '../api/workspaces';
 import { useAuthStore } from '../stores/authStore';
@@ -82,12 +83,17 @@ export default function WorkspacePage() {
   const [view, setView] = useState<'list' | 'create' | 'detail'>('list');
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [detail, setDetail] = useState<WorkspaceDetail | null>(null);
+  const [joinableWorkspaces, setJoinableWorkspaces] = useState<WorkspaceJoinable[]>([]);
   const [accessRequests, setAccessRequests] = useState<WorkspaceAccessRequest[]>([]);
   const [agents, setAgents] = useState<AgentCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [joiningId, setJoiningId] = useState<string | null>(null);
+  const [joinLoading, setJoinLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [requestReason, setRequestReason] = useState('업무 수행을 위해 접근 권한이 필요합니다.');
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [joinOpen, setJoinOpen] = useState(false);
+  const [joinCode, setJoinCode] = useState('1234');
   const [searchQuery, setSearchQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
   const [wizardStep, setWizardStep] = useState(1);
@@ -128,17 +134,10 @@ export default function WorkspacePage() {
   const canGrantAccess =
     roles.has('trust_ops') || roles.has('release_manager') || roles.has('evaluator');
 
-  const accessible = useMemo(
-    () => workspaces.filter((workspace) => workspace.user_can_access),
-    [workspaces]
-  );
-  const requestable = useMemo(
-    () => workspaces.filter((workspace) => !workspace.user_can_access),
-    [workspaces]
-  );
   const basketItems = Object.values(basket);
   const selectedGoal = detail?.goals.find((goal) => goal.goal_id === selectedGoalId) || null;
   const topLevelGoals = detail?.goals.filter((goal) => !goal.parent_goal_id) || [];
+  const workspaceMembers = detail?.nodes.filter((node) => node.node_type === 'user') || [];
   const activeMessages = useMemo(
     () =>
       selectedGoal?.conversation_id
@@ -173,6 +172,21 @@ export default function WorkspacePage() {
   const loadAgents = async () => {
     const marketplaceAgents = await getAgents(searchQuery, activeCategory);
     setAgents(marketplaceAgents);
+  };
+
+  const openJoinWorkspace = async () => {
+    setJoinOpen(true);
+    setJoinLoading(true);
+    setJoinError(null);
+    try {
+      const data = await workspacesApi.listJoinable();
+      setJoinableWorkspaces(data);
+    } catch (err) {
+      console.error(err);
+      setJoinError('참여 가능한 워크스페이스 목록을 불러오지 못했습니다.');
+    } finally {
+      setJoinLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -288,11 +302,6 @@ export default function WorkspacePage() {
     }
   };
 
-  const requestAccess = async (workspace: Workspace) => {
-    await workspacesApi.requestAccess(workspace.workspace_id, requestReason);
-    await loadList();
-  };
-
   const decideRequest = async (requestId: string, decision: 'approve' | 'reject') => {
     if (decision === 'approve') {
       await workspacesApi.approveAccessRequest(requestId);
@@ -300,6 +309,23 @@ export default function WorkspacePage() {
       await workspacesApi.rejectAccessRequest(requestId);
     }
     await loadList();
+  };
+
+  const joinWorkspace = async (workspace: WorkspaceJoinable) => {
+    setJoiningId(workspace.workspace_id);
+    setJoinError(null);
+    try {
+      const joined = await workspacesApi.join(workspace.workspace_id, joinCode);
+      await loadList();
+      setJoinOpen(false);
+      setJoinableWorkspaces([]);
+      await openDetail(joined.workspace_id);
+    } catch (err) {
+      console.error(err);
+      setJoinError('참여 코드가 올바르지 않거나 참여할 수 없는 워크스페이스입니다.');
+    } finally {
+      setJoiningId(null);
+    }
   };
 
   const publishMessage = async () => {
@@ -1014,6 +1040,27 @@ export default function WorkspacePage() {
                       </>
                     )}
                   </InspectorSection>
+                  <InspectorSection title="Workspace Members">
+                    {workspaceMembers.length === 0 ? (
+                      <div className="rounded-[14px] bg-white/[0.04] p-4 text-[13px] leading-5 text-white/50">
+                        참여 중인 사용자가 없습니다.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {workspaceMembers.map((member) => (
+                          <div key={member.node_id} className="flex items-center gap-3 rounded-[12px] bg-white/[0.04] px-3 py-2">
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-apple-blue text-[12px] font-semibold text-white">
+                              {member.display_name.charAt(0)}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[13px] font-medium text-white/76">{member.display_name}</span>
+                              <span className="block text-[11px] text-white/38">{member.status} · {member.ref_id.slice(0, 8)}</span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </InspectorSection>
                   <InspectorSection title="Current State / Memory">
                     <div className="rounded-[14px] bg-white/[0.04] p-4 text-[13px] leading-5 text-white/50">
                       Memory snapshot and runtime state will appear here when persistent agent memory is connected.
@@ -1035,43 +1082,91 @@ export default function WorkspacePage() {
         subtitle="공장, 도시 데이터, 운영 환경을 다중 에이전트 메시 구조로 관리합니다."
         actionLabel={canCreateWorkspace ? '새 워크스페이스 생성' : undefined}
         onAction={canCreateWorkspace ? () => setView('create') : undefined}
+        secondaryActionLabel="워크스페이스 참여"
+        onSecondaryAction={openJoinWorkspace}
       />
       {error && <Alert message={error} />}
+      {joinOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-4xl rounded-[18px] border border-white/10 bg-[#17181c] p-6 shadow-[0_24px_90px_rgba(0,0,0,0.48)]">
+            <div className="mb-5 flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-[22px] font-semibold text-white">워크스페이스 참여</h2>
+                <p className="mt-1 text-[13px] text-white/50">전체 워크스페이스 목록에서 참여할 환경을 선택하고 참여 코드를 입력하세요.</p>
+              </div>
+              <button className="text-[22px] text-white/45 hover:text-white" onClick={() => setJoinOpen(false)}>×</button>
+            </div>
+            <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end">
+              <Field label="참여 코드">
+                <input className="input-field" value={joinCode} onChange={(e) => setJoinCode(e.target.value)} placeholder="1234" />
+              </Field>
+              <button className="btn-secondary md:mb-0.5" onClick={openJoinWorkspace} disabled={joinLoading}>
+                {joinLoading ? '새로고침 중...' : '목록 새로고침'}
+              </button>
+            </div>
+            {joinError && <Alert message={joinError} />}
+            {joinLoading ? (
+              <div className="py-12 text-center text-white/50">참여 가능한 워크스페이스를 불러오는 중...</div>
+            ) : joinableWorkspaces.length === 0 ? (
+              <div className="rounded-[14px] border border-white/10 bg-white/[0.04] p-6 text-[14px] text-white/55">참여 가능한 워크스페이스가 없습니다.</div>
+            ) : (
+              <div className="max-h-[56vh] overflow-y-auto">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {joinableWorkspaces.map((workspace) => (
+                    <div key={workspace.workspace_id} className="rounded-[14px] border border-white/10 bg-apple-surface2 p-4">
+                      <div className="mb-3 flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <h3 className="truncate text-[16px] font-semibold text-white">{workspace.name || '워크스페이스'}</h3>
+                          <p className="mt-1 line-clamp-2 text-[13px] text-white/55">{workspace.description || '환경 설명 없음'}</p>
+                        </div>
+                        <span className="shrink-0 rounded-full bg-white/10 px-2 py-1 text-[11px] text-white/55">{workspace.access_status}</span>
+                      </div>
+                      <div className="mb-4 grid grid-cols-3 gap-2 text-[11px] text-white/45">
+                        <span className="rounded-[9px] bg-white/[0.04] px-2 py-1.5">에이전트 {workspace.agent_count}</span>
+                        <span className="rounded-[9px] bg-white/[0.04] px-2 py-1.5">사용자 {workspace.user_count}</span>
+                        <span className="rounded-[9px] bg-white/[0.04] px-2 py-1.5">활동 {workspace.recent_activity_count}</span>
+                      </div>
+                      <button
+                        className="btn-primary w-full disabled:opacity-45"
+                        disabled={workspace.user_can_access || joiningId === workspace.workspace_id}
+                        onClick={() => void joinWorkspace(workspace)}
+                      >
+                        {workspace.user_can_access ? '이미 참여됨' : joiningId === workspace.workspace_id ? '참여 중...' : '참여'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {loading ? (
         <div className="py-20 text-center text-white/50">불러오는 중...</div>
-      ) : accessible.length === 0 ? (
+      ) : workspaces.length === 0 ? (
         <div className="bg-apple-surface1 rounded-[18px] p-8 border border-white/5">
           <h2 className="text-[24px] font-semibold text-white mb-2">현재 할당된 환경이 없습니다</h2>
-          <p className="text-[14px] text-white/50 mb-6">시스템 전체 워크스페이스를 훑어보고 접근 권한을 신청하세요.</p>
-          <WorkspaceExplorer workspaces={workspaces} requestReason="" onRequest={requestAccess} />
+          <p className="text-[14px] text-white/50">워크스페이스 참여를 통해 접근 권한을 얻으면 목록에 표시됩니다.</p>
         </div>
       ) : (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 mb-8">
-            {accessible.map((workspace) => (
-              <button key={workspace.workspace_id} onClick={() => openDetail(workspace.workspace_id)} className="text-left bg-apple-surface1 rounded-[18px] p-6 border border-white/5 hover:border-apple-blue/40 transition-all">
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <h2 className="text-[21px] font-semibold text-white">{workspace.name}</h2>
-                    <p className="text-[13px] text-white/50 mt-1 line-clamp-2">{workspace.description || '환경 설명 없음'}</p>
-                  </div>
-                  <span className="text-[11px] text-apple-blue bg-apple-blue/10 px-2 py-1 rounded-full">{workspace.access_status}</span>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5 mb-8">
+          {workspaces.map((workspace) => (
+            <button key={workspace.workspace_id} onClick={() => openDetail(workspace.workspace_id)} className="text-left bg-apple-surface1 rounded-[18px] p-6 border border-white/5 hover:border-apple-blue/40 transition-all">
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h2 className="text-[21px] font-semibold text-white">{workspace.name}</h2>
+                  <p className="text-[13px] text-white/50 mt-1 line-clamp-2">{workspace.description || '환경 설명 없음'}</p>
                 </div>
-                <div className="flex gap-4 text-[12px] text-white/55">
-                  <span>에이전트 {workspace.active_agent_count}</span>
-                  <span>최근 메시지 {workspace.recent_message_count}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-          {requestable.length > 0 && (
-            <section className="bg-apple-surface1 rounded-[18px] p-6 border border-white/5">
-              <h2 className="text-[17px] font-semibold text-white mb-3">전체 워크스페이스 탐색 및 권한 신청</h2>
-              <textarea className="input-field min-h-[70px] mb-4" value={requestReason} onChange={(e) => setRequestReason(e.target.value)} />
-              <WorkspaceExplorer workspaces={requestable} requestReason={requestReason} onRequest={requestAccess} />
-            </section>
-          )}
-        </>
+                <span className="text-[11px] text-apple-blue bg-apple-blue/10 px-2 py-1 rounded-full">{workspace.access_status}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-[12px] text-white/55">
+                <span className="rounded-[10px] bg-white/[0.04] px-3 py-2">에이전트 {workspace.agent_count}</span>
+                <span className="rounded-[10px] bg-white/[0.04] px-3 py-2">사용자 {workspace.user_count}</span>
+                <span className="rounded-[10px] bg-white/[0.04] px-3 py-2">최근 활동 {workspace.recent_activity_count}</span>
+              </div>
+            </button>
+          ))}
+        </div>
       )}
       {canGrantAccess && accessRequests.length > 0 && (
         <section className="mt-6 bg-apple-surface1 rounded-[18px] p-6 border border-white/5">
@@ -1099,11 +1194,15 @@ function Header({
   subtitle,
   actionLabel,
   onAction,
+  secondaryActionLabel,
+  onSecondaryAction,
 }: {
   title: string;
   subtitle: string;
   actionLabel?: string;
   onAction?: () => void;
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
 }) {
   return (
     <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8 pb-6 border-b border-white/10">
@@ -1111,7 +1210,10 @@ function Header({
         <h1 className="text-[40px] font-semibold text-white tracking-[-0.28px] leading-[1.07] mb-2">{title}</h1>
         <p className="text-[17px] text-white/60 tracking-[-0.374px] leading-[1.47]">{subtitle}</p>
       </div>
-      {actionLabel && onAction && <button className="btn-primary" onClick={onAction}>{actionLabel}</button>}
+      <div className="flex flex-wrap gap-2">
+        {secondaryActionLabel && onSecondaryAction && <button className="btn-secondary" onClick={onSecondaryAction}>{secondaryActionLabel}</button>}
+        {actionLabel && onAction && <button className="btn-primary" onClick={onAction}>{actionLabel}</button>}
+      </div>
     </div>
   );
 }
@@ -1202,38 +1304,6 @@ function InspectorKV({ label, value }: { label: string; value: string }) {
     <div className="mb-3">
       <p className="text-[11px] uppercase tracking-[0.12em] text-white/30">{label}</p>
       <p className="mt-1 break-words text-[13px] leading-5 text-white/68">{value}</p>
-    </div>
-  );
-}
-
-function WorkspaceExplorer({
-  workspaces,
-  requestReason,
-  onRequest,
-}: {
-  workspaces: Workspace[];
-  requestReason: string;
-  onRequest: (workspace: Workspace) => void;
-}) {
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {workspaces.map((workspace) => (
-        <div key={workspace.workspace_id} className="bg-apple-surface2 rounded-[14px] p-4 border border-white/10">
-          <h3 className="text-[15px] font-semibold text-white">{workspace.name}</h3>
-          <p className="text-[13px] text-white/55 line-clamp-2 mt-1">{workspace.description || '환경 설명 없음'}</p>
-          <div className="flex gap-3 text-[11px] text-white/40 my-3">
-            <span>에이전트 {workspace.active_agent_count}</span>
-            <span>메시지 {workspace.recent_message_count}</span>
-          </div>
-          <button
-            className="text-[13px] text-apple-blue disabled:text-white/35"
-            disabled={workspace.access_status === 'pending'}
-            onClick={() => onRequest({ ...workspace, description: requestReason || workspace.description })}
-          >
-            {workspace.access_status === 'pending' ? '신청 대기 중' : 'Request Access'}
-          </button>
-        </div>
-      ))}
     </div>
   );
 }

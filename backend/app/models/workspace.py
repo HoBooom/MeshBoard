@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional, List
 
-from sqlalchemy import String, Text, ForeignKey, DateTime, CheckConstraint
+from sqlalchemy import String, Text, ForeignKey, DateTime, CheckConstraint, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -96,6 +96,29 @@ class WorkspaceMember(Base):
 
     __table_args__ = (
         CheckConstraint("role IN ('viewer','operator','developer')", name="ck_workspace_members_role"),
+    )
+
+
+class WorkspaceNode(Base):
+    __tablename__ = "workspace_nodes"
+
+    node_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("workspaces.workspace_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    node_type: Mapped[str] = mapped_column(String(10), nullable=False)
+    ref_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="idle")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        CheckConstraint("node_type IN ('user','agent')", name="ck_workspace_nodes_node_type"),
+        CheckConstraint("status IN ('active','idle','processing','error')", name="ck_workspace_nodes_status"),
+        UniqueConstraint("workspace_id", "node_type", "ref_id", name="uq_workspace_nodes_ref"),
     )
 
 
