@@ -1,6 +1,6 @@
 {
     "project": "MeshBoard",
-    "last_updated": "2026-05-12",
+    "last_updated": "2026-05-13",
     "rules": {
       "single_active_feature": true,
       "passing_requires_evidence": true,
@@ -170,7 +170,7 @@
         "area": "consumer_wb",
         "title": "Subscription 기반 메시지 라우팅",
         "user_visible_behavior": "사용자가 메시지를 보내면 해당 사용자를 구독 중인 에이전트가 메시지를 수신한다.",
-        "status": "not_started",
+        "status": "passing",
         "implementation_scope": [
           "메시지 전송 시 sender_node 조회",
           "sender_node를 target으로 구독 중인 agent node 조회",
@@ -182,12 +182,20 @@
           "with_mention": "mention된 node에게 우선 전달"
         },
         "verification": [
-          "1. 사용자가 메시지를 보내면 해당 사용자를 구독한 에이전트가 라우팅 대상이 된다.",
-          "2. 사용자를 구독하지 않은 에이전트는 응답하지 않는다.",
-          "3. 라우팅 대상이 없으면 '응답 가능한 에이전트가 없습니다' 안내가 표시된다."
+          "✅ [2026-05-12] 1. 사용자가 메시지를 보내면 해당 사용자를 구독한 에이전트가 라우팅 대상이 된다.",
+          "✅ [2026-05-12] 2. 사용자를 구독하지 않은 에이전트는 응답하지 않는다.",
+          "✅ [2026-05-12] 3. 라우팅 대상이 없으면 '응답 가능한 에이전트가 없습니다' 안내가 표시된다."
         ],
-        "evidence": [],
-        "notes": "아직 LLM 호출 전 단계. 라우팅 대상 결정까지만 검증."
+        "evidence": [
+          "backend/app/services/message_broker.py — 메시지 발행 시 sender_node(user/agent)를 조회하고 해당 node를 target으로 구독하는 active workspace_edges를 라우팅 대상으로 사용",
+          "backend/app/services/message_broker.py — 라우팅된 agent node별 MessageReceipt(consumed)를 생성하고 header.processed_count를 matched agent 수로 갱신",
+          "backend/app/services/message_broker.py — workspace에 배치되었지만 sender node를 구독하지 않은 agent는 ignored_agent_ids로 반환",
+          "frontend/src/pages/WorkspacePage.tsx — 라우팅 matched_agent_ids가 0개이면 '응답 가능한 에이전트가 없습니다.' 안내 표시",
+          "✅ `cd backend && uv run python -m compileall app/services/message_broker.py app/api/v1/messages.py app/api/v1/workspaces.py` 통과",
+          "✅ `cd frontend && npm run build` 통과",
+          "✅ `cd backend && uv run python - <<'PY' ... positive matched=1 ignored_contains_unsubscribed=True receipts=1, empty matched=0 ignored=2 ... PY` 통과"
+        ],
+        "notes": "LLM 호출 전 단계로, workspace_edges subscription 관계를 기준으로 메시지 라우팅 대상과 receipt 생성까지 검증 완료."
       },
       {
         "id": "PH3-wb-006",
@@ -195,7 +203,7 @@
         "area": "consumer_wb",
         "title": "에이전트 LLM 호출 및 응답 메시지 생성",
         "user_visible_behavior": "사용자가 메시지를 보내면 라우팅된 에이전트가 실제 LLM 응답을 생성하고 메시지 피드에 표시된다.",
-        "status": "not_started",
+        "status": "passing",
         "implementation_scope": [
           "라우팅된 agent node별 LLM 호출",
           "에이전트 응답 메시지 저장",
@@ -204,13 +212,22 @@
           "응답 대기 중 agent status를 processing으로 표시"
         ],
         "verification": [
-          "1. 사용자 메시지 전송 후 최소 1개 에이전트가 LLM 응답을 생성한다.",
-          "2. 생성된 응답이 conversation_messages에 저장된다.",
-          "3. 프론트엔드 메시지 피드에 에이전트 응답이 표시된다.",
-          "4. LLM 호출 실패 시 오류 상태가 UI에 표시된다."
+          "✅ [2026-05-13] 1. 사용자 메시지 전송 후 최소 1개 에이전트가 LLM 응답을 생성한다.",
+          "✅ [2026-05-13] 2. 생성된 응답이 conversation_messages에 저장된다.",
+          "✅ [2026-05-13] 3. 프론트엔드 메시지 피드에 에이전트 응답이 표시된다.",
+          "✅ [2026-05-13] 4. LLM 호출 실패 시 오류 상태가 UI에 표시된다."
         ],
-        "evidence": [],
-        "notes": "현재 핵심 문제인 '에이전트가 반응하지 않음'의 실제 해결 지점."
+        "evidence": [
+          "backend/app/services/message_broker.py — 라우팅된 agent별 invoke_agent 호출 추가",
+          "backend/app/services/message_broker.py — agent LLM 응답을 sender_type=agent MessageHeader 및 Message로 저장해 기존 메시지 피드에 노출",
+          "backend/app/services/message_broker.py — agent node 상태를 호출 전 processing, 성공 시 active, 실패 시 error로 갱신",
+          "frontend/src/pages/WorkspacePage.tsx — 메시지 전송 직후 라우팅 대상 agent node를 processing으로 표시",
+          "frontend/src/pages/WorkspacePage.tsx — Active Agents/Map에서 workspace_nodes.status를 우선 사용해 active/processing/error 상태 표시",
+          "✅ `cd backend && uv run python -m compileall app/services/message_broker.py app/api/v1/messages.py app/api/v1/workspaces.py` 통과",
+          "✅ `cd frontend && npm run build` 통과",
+          "✅ `cd backend && uv run python - <<'PY' ... success response_headers=1 conversation_messages=2 node_status=active, failure response_headers=0 node_status=error ... PY` 통과"
+        ],
+        "notes": "라우팅된 에이전트가 LLM 런타임을 실행하고, 성공 응답을 메시지 피드에 저장하며, 실패 상태는 workspace node status로 UI에 표시되도록 구현 완료."
       },
       {
         "id": "PH3-wb-007",

@@ -48,15 +48,17 @@ function agentStatus(index: number): 'active' | 'processing' | 'idle' {
   return 'idle';
 }
 
-function statusTone(status: 'active' | 'processing' | 'idle'): string {
+function statusTone(status: 'active' | 'processing' | 'idle' | 'error'): string {
   if (status === 'active') return 'bg-[#34c759]';
   if (status === 'processing') return 'bg-[#ffd60a]';
+  if (status === 'error') return 'bg-[#ff453a]';
   return 'bg-white/30';
 }
 
-function statusLabel(status: 'active' | 'processing' | 'idle'): string {
+function statusLabel(status: 'active' | 'processing' | 'idle' | 'error'): string {
   if (status === 'active') return 'active';
   if (status === 'processing') return 'processing';
+  if (status === 'error') return 'error';
   return 'idle';
 }
 
@@ -369,27 +371,57 @@ export default function WorkspacePage() {
     }
   };
 
+  const markRoutedAgentsProcessing = () => {
+    if (!detail || !user?.user_id) return;
+    const senderNode = detail.nodes.find(
+      (node) => node.node_type === 'user' && node.ref_id === user.user_id
+    );
+    if (!senderNode) return;
+    const routedAgentNodeIds = new Set(
+      detail.edges
+        .filter((edge) => edge.edge_type === 'subscription' && edge.status === 'active' && edge.target_node_id === senderNode.node_id)
+        .map((edge) => edge.source_node_id)
+    );
+    if (routedAgentNodeIds.size === 0) return;
+    setDetail({
+      ...detail,
+      nodes: detail.nodes.map((node) =>
+        node.node_type === 'agent' && routedAgentNodeIds.has(node.node_id)
+          ? { ...node, status: 'processing' }
+          : node
+      ),
+    });
+  };
+
   const publishMessage = async () => {
     if (!detail) return;
-    if (!messageText.trim()) return;
+    const nextMessage = messageText.trim();
+    if (!nextMessage) return;
     setError(null);
-    const result = await workspacesApi.publish(detail.workspace_id, {
-      domain: 'workspace',
-      intent: selectedGoal ? 'goal_message' : 'operator_message',
-      payload: { message: messageText.trim() },
-      tags: selectedGoal ? ['workspace', 'goal'] : ['workspace'],
-      priority: 'medium',
-      conversation_id: selectedGoal?.conversation_id,
-    });
-    setPublishResult(result);
-    if (result.routing.matched_agent_ids.length === 0) {
-      setError('응답 가능한 에이전트가 없습니다.');
+    markRoutedAgentsProcessing();
+    try {
+      const result = await workspacesApi.publish(detail.workspace_id, {
+        domain: 'workspace',
+        intent: selectedGoal ? 'goal_message' : 'operator_message',
+        payload: { message: nextMessage },
+        tags: selectedGoal ? ['workspace', 'goal'] : ['workspace'],
+        priority: 'medium',
+        conversation_id: selectedGoal?.conversation_id,
+      });
+      setMessageText('');
+      setPublishResult(result);
+      if (result.routing.matched_agent_ids.length === 0) {
+        setError('응답 가능한 에이전트가 없습니다.');
+      }
+      const nextDetail = await workspacesApi.get(detail.workspace_id);
+      if (selectedGoal?.conversation_id) {
+        nextDetail.messages = await workspacesApi.listMessages(detail.workspace_id, selectedGoal.conversation_id);
+      }
+      setDetail(nextDetail);
+    } catch (err) {
+      console.error(err);
+      setError('메시지 전송 중 오류가 발생했습니다.');
     }
-    const nextDetail = await workspacesApi.get(detail.workspace_id);
-    if (selectedGoal?.conversation_id) {
-      nextDetail.messages = await workspacesApi.listMessages(detail.workspace_id, selectedGoal.conversation_id);
-    }
-    setDetail(nextDetail);
   };
 
   const selectGoal = async (goal: Goal | null) => {
@@ -453,14 +485,20 @@ export default function WorkspacePage() {
   useEffect(() => {
     if (!detail) return;
 
+    const agentStatusById = new Map(
+      detail.nodes
+        .filter((node) => node.node_type === 'agent')
+        .map((node) => [node.ref_id, node.status])
+    );
     const expandedAgents = detail.placements.flatMap((placement) =>
       Array.from({ length: placement.quantity }, (_, index) => {
         const instanceNumber = index + 1;
         const messageCount = activeMessages.filter(
           (message) => message.sender_id === placement.agent.agent_id
         ).length;
-        const status =
+        const fallbackStatus =
           messageCount > 3 ? 'active' : index === 0 && messageCount > 0 ? 'processing' : 'idle';
+        const status = agentStatusById.get(placement.agent.agent_id) || fallbackStatus;
         return {
           id: `${placement.agent.agent_id}-${instanceNumber}`,
           agentId: placement.agent.agent_id,
@@ -802,6 +840,11 @@ export default function WorkspacePage() {
       null;
     const expandedMessage = detail.messages.find((message) => message.message_id === expandedMessageId);
     const agentLabel = selectedAgent ? selectedAgent.agent.name : 'environment-messages';
+    const detailAgentStatusById = new Map(
+      detail.nodes
+        .filter((node) => node.node_type === 'agent')
+        .map((node) => [node.ref_id, node.status])
+    );
 
     return (
       <div className="animate-fade-in font-apple">
@@ -825,7 +868,7 @@ export default function WorkspacePage() {
             <div className="flex-1 overflow-y-auto p-3">
               <SidebarGroup title="Active Agents">
                 {detail.placements.map((placement, index) => {
-                  const status = agentStatus(index);
+                  const status = detailAgentStatusById.get(placement.agent.agent_id) || agentStatus(index);
                   const unreadCount = detail.messages.filter(
                     (message) => message.sender_id === placement.agent.agent_id
                   ).length;
@@ -1094,15 +1137,20 @@ export default function WorkspacePage() {
                   )}
                   <div ref={messageFeedEndRef} />
                 </div>
-                <div className="border-t border-black/10 bg-white/90 p-4">
-                  <div className="flex items-end gap-3 rounded-[18px] border border-black/10 bg-[#f7f8fa] p-2 shadow-inner">
+                <div className="border-t border-black/10 bg-white/90 p-3">
+                  <div className="flex items-center gap-2 rounded-[14px] border border-black/10 bg-[#f7f8fa] p-1.5 shadow-inner">
                     <textarea
-                      className="min-h-[44px] flex-1 resize-none bg-transparent px-3 py-2 text-[14px] leading-6 text-black/80 outline-none placeholder:text-black/35"
+                      className="min-h-[36px] flex-1 resize-none bg-transparent px-3 py-1.5 text-[14px] leading-5 text-black/80 outline-none placeholder:text-black/35"
                       value={messageText}
                       onChange={(e) => setMessageText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
+                        e.preventDefault();
+                        void publishMessage();
+                      }}
                       placeholder="@agent_name 에게 메시지 보내기"
                     />
-                    <button className="btn-primary !rounded-[12px]" onClick={publishMessage}>Send</button>
+                    <button className="btn-primary !h-9 !rounded-[10px] !px-4 !py-0" onClick={publishMessage}>Send</button>
                   </div>
                   {publishResult && (
                     <p className="mt-2 text-[11px] text-black/38">
