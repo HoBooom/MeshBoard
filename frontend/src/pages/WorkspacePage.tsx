@@ -101,6 +101,8 @@ export default function WorkspacePage() {
   const [workspaceDescription, setWorkspaceDescription] = useState('');
   const [workspaceTags, setWorkspaceTags] = useState('');
   const [basket, setBasket] = useState<Record<string, { agent: AgentCard; quantity: number }>>({});
+  const [subscriptionTargets, setSubscriptionTargets] = useState<Record<string, string[]>>({});
+  const [subscriptionFilter, setSubscriptionFilter] = useState<'all' | 'user' | 'agent'>('all');
   const [draftAgentName, setDraftAgentName] = useState('');
   const [draftAgentPurpose, setDraftAgentPurpose] = useState('');
   const [messageText, setMessageText] = useState('E001 사번의 연차 잔여일을 확인해줘');
@@ -239,9 +241,27 @@ export default function WorkspacePage() {
       if (quantity <= 0) {
         const next = { ...prev };
         delete next[agentId];
+        setSubscriptionTargets((targets) => {
+          const cleaned = { ...targets };
+          delete cleaned[agentId];
+          Object.keys(cleaned).forEach((sourceAgentId) => {
+            cleaned[sourceAgentId] = cleaned[sourceAgentId].filter((targetKey) => targetKey !== `agent:${agentId}`);
+          });
+          return cleaned;
+        });
         return next;
       }
       return { ...prev, [agentId]: { ...current, quantity } };
+    });
+  };
+
+  const toggleSubscriptionTarget = (sourceAgentId: string, targetKey: string) => {
+    setSubscriptionTargets((prev) => {
+      const current = prev[sourceAgentId] || [];
+      const nextTargets = current.includes(targetKey)
+        ? current.filter((item) => item !== targetKey)
+        : [...current, targetKey];
+      return { ...prev, [sourceAgentId]: nextTargets };
     });
   };
 
@@ -275,11 +295,22 @@ export default function WorkspacePage() {
     setDraftAgentPurpose('');
   };
 
+  const validateAgentSubscriptions = () => {
+    const agentsMissingSubscriptions = basketItems.filter(
+      (item) => (subscriptionTargets[item.agent.agent_id] || []).length === 0
+    );
+    if (agentsMissingSubscriptions.length === 0) return true;
+    setError(`구독 대상을 선택하지 않은 에이전트가 있습니다: ${agentsMissingSubscriptions.map((item) => item.agent.name).join(', ')}`);
+    setWizardStep(2);
+    return false;
+  };
+
   const createWorkspace = async () => {
     if (!workspaceName.trim()) {
       setError('워크스페이스 이름을 입력하세요.');
       return;
     }
+    if (!validateAgentSubscriptions()) return;
     setSaving(true);
     setError(null);
     try {
@@ -291,6 +322,16 @@ export default function WorkspacePage() {
           agent_id: item.agent.agent_id,
           quantity: item.quantity,
         })),
+        agent_subscriptions: basketItems.flatMap((item) =>
+          (subscriptionTargets[item.agent.agent_id] || []).map((targetKey) => {
+            const [targetType, targetRefId] = targetKey.split(':');
+            return {
+              source_agent_id: item.agent.agent_id,
+              target_node_type: targetType as 'user' | 'agent',
+              target_ref_id: targetRefId,
+            };
+          })
+        ),
       });
       await loadList();
       await openDetail(workspace.workspace_id);
@@ -330,15 +371,20 @@ export default function WorkspacePage() {
 
   const publishMessage = async () => {
     if (!detail) return;
+    if (!messageText.trim()) return;
+    setError(null);
     const result = await workspacesApi.publish(detail.workspace_id, {
       domain: 'workspace',
       intent: selectedGoal ? 'goal_message' : 'operator_message',
-      payload: { message: messageText },
+      payload: { message: messageText.trim() },
       tags: selectedGoal ? ['workspace', 'goal'] : ['workspace'],
       priority: 'medium',
       conversation_id: selectedGoal?.conversation_id,
     });
     setPublishResult(result);
+    if (result.routing.matched_agent_ids.length === 0) {
+      setError('응답 가능한 에이전트가 없습니다.');
+    }
     const nextDetail = await workspacesApi.get(detail.workspace_id);
     if (selectedGoal?.conversation_id) {
       nextDetail.messages = await workspacesApi.listMessages(detail.workspace_id, selectedGoal.conversation_id);
@@ -426,44 +472,76 @@ export default function WorkspacePage() {
           eventCount: messageCount + placement.agent.tools.length,
           version: placement.agent.version,
           tools: placement.agent.tools,
+          nodeType: 'agent' as const,
         };
       })
     );
+    const expandedUsers = detail.nodes
+      .filter((node) => node.node_type === 'user')
+      .map((node) => {
+        const messageCount = activeMessages.filter((message) => message.sender_id === node.ref_id).length;
+        return {
+          id: `user-${node.node_id}`,
+          refId: node.ref_id,
+          name: node.display_name,
+          role: 'workspace member',
+          type: 'user',
+          status: node.status,
+          messageCount,
+          eventCount: messageCount,
+          version: '',
+          tools: [] as string[],
+          nodeType: 'user' as const,
+        };
+      });
 
-    const filteredAgents = expandedAgents.filter((agent) =>
-      mapFilter === 'all' ? true : agent.status === mapFilter
+    const graphItems = [...expandedUsers, ...expandedAgents];
+    const filteredGraphItems = graphItems.filter((item) =>
+      mapFilter === 'all' ? true : item.status === mapFilter
     );
-    const columns = Math.max(3, Math.ceil(Math.sqrt(Math.max(filteredAgents.length, 1))));
-    const nodes: Node[] = filteredAgents.map((agent, index) => {
+    const columns = Math.max(3, Math.ceil(Math.sqrt(Math.max(filteredGraphItems.length, 1))));
+    const nodes: Node[] = filteredGraphItems.map((item, index) => {
       const x = (index % columns) * 260;
       const y = Math.floor(index / columns) * 170;
-      const statusColor = topologyStatusTone(agent.status);
-      const highlighted = selectedAgentId === agent.agentId || selectedMapNodeId === agent.id;
+      const statusColor = topologyStatusTone(item.status);
+      const highlighted =
+        (item.nodeType === 'agent' && selectedAgentId === item.agentId) ||
+        selectedMapNodeId === item.id;
 
       return {
-        id: agent.id,
+        id: item.id,
         position: { x, y },
         data: {
-          agentId: agent.agentId,
-          status: agent.status,
-          role: agent.role,
-          messageCount: agent.messageCount,
-          eventCount: agent.eventCount,
-          tools: agent.tools,
+          agentId: item.nodeType === 'agent' ? item.agentId : undefined,
+          refId: item.nodeType === 'user' ? item.refId : item.agentId,
+          nodeType: item.nodeType,
+          displayName: item.name,
+          status: item.status,
+          role: item.role,
+          messageCount: item.messageCount,
+          eventCount: item.eventCount,
+          tools: item.tools,
           label: (
             <div className={`min-w-[210px] rounded-[18px] border bg-white px-4 py-3 shadow-sm ${highlighted ? 'border-apple-blue shadow-[0_0_0_4px_rgba(0,113,227,0.14)]' : 'border-black/10'}`}>
               <div className="mb-2 flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] font-semibold text-[#1d1d1f]">{agent.name}</p>
-                  <p className="text-[11px] uppercase tracking-[0.08em] text-black/38">{agent.type}</p>
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${item.nodeType === 'user' ? 'bg-[#0071e3] text-white' : 'bg-black/[0.06] text-black/60'}`}>
+                    {item.nodeType === 'user' ? item.name.charAt(0) : 'A'}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-[13px] font-semibold text-[#1d1d1f]">{item.name}</p>
+                    <p className="text-[11px] uppercase tracking-[0.08em] text-black/38">{item.type}</p>
+                  </div>
                 </div>
                 <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: statusColor }} />
               </div>
               <div className="grid grid-cols-2 gap-2 text-[11px] text-black/55">
-                <span className="rounded-[9px] bg-black/[0.04] px-2 py-1">msg {agent.messageCount}</span>
-                <span className="rounded-[9px] bg-black/[0.04] px-2 py-1">event {agent.eventCount}</span>
+                <span className="rounded-[9px] bg-black/[0.04] px-2 py-1">msg {item.messageCount}</span>
+                <span className="rounded-[9px] bg-black/[0.04] px-2 py-1">event {item.eventCount}</span>
               </div>
-              <p className="mt-2 text-[11px] text-black/40">{agent.status} · v{agent.version}</p>
+              <p className="mt-2 text-[11px] text-black/40">
+                {item.status}{item.nodeType === 'agent' ? ` · v${item.version}` : ' · member'}
+              </p>
             </div>
           ),
         },
@@ -478,18 +556,21 @@ export default function WorkspacePage() {
 
     const nodeIds = new Set(nodes.map((node) => node.id));
     const messageEdges: Edge[] = [];
-    const agentNodeByAgentId = new Map<string, string>();
+    const graphNodeByRefId = new Map<string, string>();
     expandedAgents.forEach((agent) => {
-      if (!agentNodeByAgentId.has(agent.agentId)) {
-        agentNodeByAgentId.set(agent.agentId, agent.id);
+      if (!graphNodeByRefId.has(agent.agentId)) {
+        graphNodeByRefId.set(agent.agentId, agent.id);
       }
+    });
+    expandedUsers.forEach((member) => {
+      graphNodeByRefId.set(member.refId, member.id);
     });
 
     activeMessages.forEach((message, index, messages) => {
       const nextMessage = messages[index + 1];
       if (!nextMessage) return;
-      const source = agentNodeByAgentId.get(message.sender_id);
-      const target = agentNodeByAgentId.get(nextMessage.sender_id);
+      const source = graphNodeByRefId.get(message.sender_id);
+      const target = graphNodeByRefId.get(nextMessage.sender_id);
       if (!source || !target || source === target || !nodeIds.has(source) || !nodeIds.has(target)) return;
       const edgeId = `message-${source}-${target}`;
       if (messageEdges.some((edge) => edge.id === edgeId)) return;
@@ -527,7 +608,7 @@ export default function WorkspacePage() {
   const onTopologyNodeClick: NodeMouseHandler = (_, node) => {
     setSelectedMapNodeId(node.id);
     setSelectedMapEdgeId(null);
-    setSelectedAgentId(String(node.data.agentId || '').split('-')[0]);
+    setSelectedAgentId(node.data.nodeType === 'agent' ? String(node.data.agentId || '').split('-')[0] : null);
     setInspectorMode('agent');
     setInspectorOpen(true);
   };
@@ -615,6 +696,69 @@ export default function WorkspacePage() {
                       ))
                     )}
                   </div>
+                  {basketItems.length > 0 && (
+                    <div className="border-t border-white/10 mt-4 pt-4">
+                      <div className="mb-3 flex items-center justify-between gap-3">
+                        <p className="text-[12px] text-white/50">구독 대상</p>
+                        <div className="flex rounded-[10px] bg-white/10 p-1">
+                          {(['all', 'user', 'agent'] as const).map((filter) => (
+                            <button
+                              key={filter}
+                              className={`rounded-[8px] px-2 py-1 text-[11px] font-medium ${subscriptionFilter === filter ? 'bg-apple-blue text-white' : 'text-white/50'}`}
+                              onClick={() => setSubscriptionFilter(filter)}
+                            >
+                              {filter}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="space-y-4">
+                        {basketItems.map((item) => {
+                          const selectedTargets = subscriptionTargets[item.agent.agent_id] || [];
+                          const targetOptions = [
+                            ...(user?.user_id
+                              ? [{ key: `user:${user.user_id}`, label: user.name || '나', type: 'user' as const }]
+                              : []),
+                            ...basketItems
+                              .filter((target) => target.agent.agent_id !== item.agent.agent_id)
+                              .map((target) => ({
+                                key: `agent:${target.agent.agent_id}`,
+                                label: target.agent.name,
+                                type: 'agent' as const,
+                              })),
+                          ].filter((target) => subscriptionFilter === 'all' || target.type === subscriptionFilter);
+                          return (
+                            <div key={`subscriptions-${item.agent.agent_id}`} className="rounded-[12px] bg-black/18 p-3">
+                              <div className="mb-2 flex items-center justify-between gap-2">
+                                <p className="truncate text-[12px] font-semibold text-white">{item.agent.name}</p>
+                                <span className={`text-[11px] ${selectedTargets.length > 0 ? 'text-[#34c759]' : 'text-[#ff9f0a]'}`}>
+                                  {selectedTargets.length} selected
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {targetOptions.length === 0 ? (
+                                  <span className="text-[11px] text-white/35">선택 가능한 대상이 없습니다.</span>
+                                ) : (
+                                  targetOptions.map((target) => {
+                                    const selected = selectedTargets.includes(target.key);
+                                    return (
+                                      <button
+                                        key={target.key}
+                                        className={`rounded-[9px] border px-2.5 py-1.5 text-[11px] transition ${selected ? 'border-apple-blue bg-apple-blue/20 text-white' : 'border-white/10 bg-white/[0.04] text-white/55 hover:border-apple-blue/50 hover:text-white'}`}
+                                        onClick={() => toggleSubscriptionTarget(item.agent.agent_id, target.key)}
+                                      >
+                                        {target.type === 'user' ? '사용자' : '에이전트'} · {target.label}
+                                      </button>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <div className="border-t border-white/10 mt-4 pt-4">
                     <p className="text-[12px] text-white/50 mb-2">인라인 에이전트 초안</p>
                     <input className="input-field mb-2" value={draftAgentName} onChange={(e) => setDraftAgentName(e.target.value)} placeholder="초안 에이전트 이름" />
@@ -625,7 +769,10 @@ export default function WorkspacePage() {
               </div>
               <div className="flex justify-between mt-6">
                 <button className="btn-secondary" onClick={() => setWizardStep(1)}>이전</button>
-                <button className="btn-primary" onClick={() => setWizardStep(3)}>다음: 환경 구성</button>
+                <button className="btn-primary" onClick={() => {
+                  setError(null);
+                  if (validateAgentSubscriptions()) setWizardStep(3);
+                }}>다음: 환경 구성</button>
               </div>
             </section>
           )}
@@ -704,6 +851,39 @@ export default function WorkspacePage() {
                     </button>
                   );
                 })}
+              </SidebarGroup>
+
+              <SidebarGroup title="Workspace Members">
+                {workspaceMembers.length === 0 ? (
+                  <div className="rounded-[12px] px-3 py-2 text-[12px] text-white/38">참여한 사용자가 없습니다.</div>
+                ) : (
+                  workspaceMembers.map((member) => {
+                    const memberNodeId = `user-${member.node_id}`;
+                    const selected = selectedMapNodeId === memberNodeId;
+                    const messageCount = detail.messages.filter((message) => message.sender_id === member.ref_id).length;
+                    return (
+                      <button
+                        key={member.node_id}
+                        className={`mb-1 flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 text-left transition ${selected ? 'bg-apple-blue/20 text-white' : 'text-white/60 hover:bg-white/[0.07] hover:text-white'}`}
+                        onClick={() => {
+                          setSelectedAgentId(null);
+                          setSelectedMapNodeId(memberNodeId);
+                          setSelectedMapEdgeId(null);
+                          setInspectorMode('agent');
+                          setInspectorOpen(true);
+                        }}
+                      >
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-apple-blue text-[11px] font-semibold text-white">
+                          {member.display_name.charAt(0)}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[13px] font-medium">{member.display_name}</span>
+                          <span className="block text-[11px] text-white/38">{member.status} · messages {messageCount}</span>
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
               </SidebarGroup>
 
               <SidebarGroup title="Goals">
@@ -978,7 +1158,13 @@ export default function WorkspacePage() {
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.16em] text-white/35">Inspector</p>
                   <h2 className="mt-1 text-[17px] font-semibold text-white">
-                    {inspectorMode === 'message' ? 'Message Details' : inspectorMode === 'logs' ? 'Execution Logs' : 'Agent Info'}
+                    {inspectorMode === 'message'
+                      ? 'Message Details'
+                      : inspectorMode === 'logs'
+                        ? 'Execution Logs'
+                        : selectedMapNode?.data.nodeType === 'user'
+                          ? 'User Node Info'
+                          : 'Agent Info'}
                   </h2>
                 </div>
                 <button className="text-[20px] text-white/45 hover:text-white" onClick={() => setInspectorOpen(false)}>×</button>
@@ -1026,12 +1212,22 @@ export default function WorkspacePage() {
                 </>
               ) : (
                 <>
-                  <InspectorSection title="Agent Configuration">
-                    <InspectorKV label="Name" value={selectedAgent?.agent.name || 'No agent selected'} />
-                    <InspectorKV label="Instances" value={`${selectedAgent?.quantity || 0}`} />
-                    <InspectorKV label="Version" value={selectedAgent?.agent.version || '-'} />
-                    <InspectorKV label="Visibility" value={selectedAgent?.agent.visibility || '-'} />
-                    <InspectorKV label="Tools" value={selectedAgent?.agent.tools.join(', ') || '-'} />
+                  <InspectorSection title={selectedMapNode?.data.nodeType === 'user' ? 'User Node' : 'Agent Configuration'}>
+                    {selectedMapNode?.data.nodeType === 'user' ? (
+                      <>
+                        <InspectorKV label="Name" value={String(selectedMapNode.data.displayName || 'User node')} />
+                        <InspectorKV label="Node type" value="user" />
+                        <InspectorKV label="User id" value={String(selectedMapNode.data.refId || '-')} />
+                      </>
+                    ) : (
+                      <>
+                        <InspectorKV label="Name" value={selectedAgent?.agent.name || 'No agent selected'} />
+                        <InspectorKV label="Instances" value={`${selectedAgent?.quantity || 0}`} />
+                        <InspectorKV label="Version" value={selectedAgent?.agent.version || '-'} />
+                        <InspectorKV label="Visibility" value={selectedAgent?.agent.visibility || '-'} />
+                        <InspectorKV label="Tools" value={selectedAgent?.agent.tools.join(', ') || '-'} />
+                      </>
+                    )}
                     {selectedMapNode && (
                       <>
                         <InspectorKV label="Map status" value={String(selectedMapNode.data.status || '-')} />

@@ -16,6 +16,14 @@ class WorkspaceAgentPlacement(BaseModel):
     quantity: int = Field(1, ge=1)
 
 
+class WorkspaceAgentSubscriptionTarget(BaseModel):
+    """워크스페이스 생성 시 agent가 구독할 user/agent 대상."""
+
+    source_agent_id: UUID
+    target_node_type: str
+    target_ref_id: UUID
+
+
 class WorkspaceCreate(BaseModel):
     """환경 단위 워크스페이스 생성 요청."""
 
@@ -23,6 +31,7 @@ class WorkspaceCreate(BaseModel):
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     agent_placements: List[WorkspaceAgentPlacement] = Field(default_factory=list)
+    agent_subscriptions: List[WorkspaceAgentSubscriptionTarget] = Field(default_factory=list)
 
 
 class WorkspaceUpdateAgents(BaseModel):
@@ -63,6 +72,25 @@ class WorkspaceNodeRead(BaseModel):
     node_type: str
     ref_id: UUID
     display_name: str
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class WorkspaceEdgeCreate(BaseModel):
+    source_node_id: UUID
+    target_node_id: UUID
+    edge_type: str = "subscription"
+
+
+class WorkspaceEdgeRead(BaseModel):
+    edge_id: UUID
+    workspace_id: UUID
+    source_node_id: UUID
+    target_node_id: UUID
+    edge_type: str
     status: str
     created_at: datetime
     updated_at: datetime
@@ -152,6 +180,7 @@ class WorkspaceDetailRead(WorkspaceRead):
     messages: List[WorkspaceMessageRead] = Field(default_factory=list)
     goals: List[GoalRead] = Field(default_factory=list)
     nodes: List[WorkspaceNodeRead] = Field(default_factory=list)
+    edges: List[WorkspaceEdgeRead] = Field(default_factory=list)
 
 
 class WorkspaceAccessRequestCreate(BaseModel):

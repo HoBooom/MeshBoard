@@ -21,6 +21,7 @@ from app.models.workspace import (
     Workspace,
     WorkspaceAccessRequest,
     WorkspaceAgent,
+    WorkspaceEdge,
     WorkspaceMember,
     WorkspaceNode,
 )
@@ -36,6 +37,8 @@ from app.schemas.workspace import (
     WorkspaceAgentRead,
     WorkspaceCreate,
     WorkspaceDetailRead,
+    WorkspaceEdgeCreate,
+    WorkspaceEdgeRead,
     WorkspaceJoinableRead,
     WorkspaceJoinRequest,
     WorkspaceMessageRead,
@@ -285,6 +288,132 @@ async def _node_reads(db: AsyncSession, workspace_id: UUID) -> List[WorkspaceNod
     return [WorkspaceNodeRead.model_validate(node) for node in result.scalars().all()]
 
 
+async def _edge_reads(db: AsyncSession, workspace_id: UUID) -> List[WorkspaceEdgeRead]:
+    result = await db.execute(
+        select(WorkspaceEdge)
+        .where(WorkspaceEdge.workspace_id == workspace_id)
+        .order_by(WorkspaceEdge.created_at.asc())
+    )
+    return [WorkspaceEdgeRead.model_validate(edge) for edge in result.scalars().all()]
+
+
+async def _load_workspace_node_by_ref(
+    db: AsyncSession,
+    workspace_id: UUID,
+    node_type: str,
+    ref_id: UUID,
+) -> WorkspaceNode:
+    node = (
+        await db.execute(
+            select(WorkspaceNode).where(
+                WorkspaceNode.workspace_id == workspace_id,
+                WorkspaceNode.node_type == node_type,
+                WorkspaceNode.ref_id == ref_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if node is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="워크스페이스 노드를 찾을 수 없습니다.")
+    return node
+
+
+async def _load_workspace_node(db: AsyncSession, workspace_id: UUID, node_id: UUID) -> WorkspaceNode:
+    node = (
+        await db.execute(
+            select(WorkspaceNode).where(
+                WorkspaceNode.workspace_id == workspace_id,
+                WorkspaceNode.node_id == node_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if node is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="워크스페이스 노드를 찾을 수 없습니다.")
+    return node
+
+
+async def _upsert_workspace_edge(
+    db: AsyncSession,
+    workspace_id: UUID,
+    source_node_id: UUID,
+    target_node_id: UUID,
+) -> WorkspaceEdge:
+    existing = (
+        await db.execute(
+            select(WorkspaceEdge).where(
+                WorkspaceEdge.workspace_id == workspace_id,
+                WorkspaceEdge.source_node_id == source_node_id,
+                WorkspaceEdge.target_node_id == target_node_id,
+                WorkspaceEdge.edge_type == "subscription",
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        if existing.status == "disabled":
+            existing.status = "active"
+            existing.updated_at = datetime.now(timezone.utc)
+        return existing
+
+    edge = WorkspaceEdge(
+        workspace_id=workspace_id,
+        source_node_id=source_node_id,
+        target_node_id=target_node_id,
+        edge_type="subscription",
+        status="active",
+    )
+    db.add(edge)
+    return edge
+
+
+def _validate_workspace_create_subscriptions(
+    placements,
+    subscriptions,
+) -> dict[UUID, list]:
+    placed_agent_ids = {placement.agent_id for placement in placements}
+    if not placed_agent_ids:
+        if subscriptions:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="배치된 에이전트 없이 구독 관계를 생성할 수 없습니다.")
+        return {}
+
+    subscriptions_by_agent: dict[UUID, list] = {agent_id: [] for agent_id in placed_agent_ids}
+    for subscription in subscriptions:
+        if subscription.source_agent_id not in placed_agent_ids:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="구독 source_agent_id 는 배치된 에이전트여야 합니다.")
+        if subscription.target_node_type not in {"user", "agent"}:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="target_node_type 은 user 또는 agent 여야 합니다.")
+        if subscription.target_node_type == "agent" and subscription.target_ref_id not in placed_agent_ids:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="agent 구독 대상은 같은 워크스페이스에 배치된 에이전트여야 합니다.")
+        if subscription.target_node_type == "agent" and subscription.target_ref_id == subscription.source_agent_id:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="에이전트는 자기 자신을 구독할 수 없습니다.")
+        subscriptions_by_agent[subscription.source_agent_id].append(subscription)
+
+    missing = [str(agent_id) for agent_id, targets in subscriptions_by_agent.items() if not targets]
+    if missing:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"구독 대상이 없는 에이전트가 있습니다: {missing}")
+    return subscriptions_by_agent
+
+
+async def _create_edges_for_workspace_subscriptions(
+    db: AsyncSession,
+    workspace: Workspace,
+    placements,
+    subscriptions,
+) -> None:
+    subscriptions_by_agent = _validate_workspace_create_subscriptions(placements, subscriptions)
+
+    for agent_id, targets in subscriptions_by_agent.items():
+        source_node = await _load_workspace_node_by_ref(db, workspace.workspace_id, "agent", agent_id)
+        for target in targets:
+            target_node = await _load_workspace_node_by_ref(
+                db,
+                workspace.workspace_id,
+                target.target_node_type,
+                target.target_ref_id,
+            )
+            if source_node.node_id == target_node.node_id:
+                raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="에이전트는 자기 자신을 구독할 수 없습니다.")
+            await _upsert_workspace_edge(db, workspace.workspace_id, source_node.node_id, target_node.node_id)
+
+
 async def _joinable_workspace_read(db: AsyncSession, workspace: Workspace, user: User) -> WorkspaceJoinableRead:
     meta = await _access_meta(db, workspace, user)
     agent_count = (
@@ -490,6 +619,7 @@ async def create_workspace(
     if not _can_create_workspace(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="워크스페이스 생성은 개발자 또는 운영자만 가능합니다.")
     await _load_agents_for_placements(db, payload.agent_placements, current_user)
+    _validate_workspace_create_subscriptions(payload.agent_placements, payload.agent_subscriptions)
     workspace = Workspace(
         name=payload.name.strip(),
         description=payload.description,
@@ -503,13 +633,20 @@ async def create_workspace(
         WorkspaceMember(
             workspace_id=workspace.workspace_id,
             user_id=current_user.user_id,
-            role="developer" if "agent_engineer" in current_user.roles else "operator",
+            role="viewer",
             granted_by=current_user.user_id,
         )
     )
     await _replace_placements(db, workspace, payload.agent_placements)
     await db.flush()
     await _sync_workspace_nodes(db, workspace)
+    await db.flush()
+    await _create_edges_for_workspace_subscriptions(
+        db,
+        workspace,
+        payload.agent_placements,
+        payload.agent_subscriptions,
+    )
     await db.flush()
     await db.refresh(workspace)
     return await _workspace_to_read(db, workspace, current_user)
@@ -678,6 +815,80 @@ async def list_workspace_nodes(
     return await _node_reads(db, workspace_id)
 
 
+@router.get("/{workspace_id}/edges", response_model=List[WorkspaceEdgeRead])
+async def list_workspace_edges(
+    workspace_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _ensure_access(db, workspace_id, current_user)
+    return await _edge_reads(db, workspace_id)
+
+
+@router.post("/{workspace_id}/edges", response_model=WorkspaceEdgeRead, status_code=status.HTTP_201_CREATED)
+async def create_workspace_edge(
+    workspace_id: UUID,
+    payload: WorkspaceEdgeCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _ensure_manage(db, workspace_id, current_user)
+    if payload.edge_type != "subscription":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="edge_type 은 subscription 만 지원합니다.")
+    if payload.source_node_id == payload.target_node_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="source_node_id 와 target_node_id 는 달라야 합니다.")
+
+    source_node = await _load_workspace_node(db, workspace_id, payload.source_node_id)
+    await _load_workspace_node(db, workspace_id, payload.target_node_id)
+    if source_node.node_type != "agent":
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="subscription edge 의 source node 는 agent 여야 합니다.")
+
+    existing = (
+        await db.execute(
+            select(WorkspaceEdge).where(
+                WorkspaceEdge.workspace_id == workspace_id,
+                WorkspaceEdge.source_node_id == payload.source_node_id,
+                WorkspaceEdge.target_node_id == payload.target_node_id,
+                WorkspaceEdge.edge_type == payload.edge_type,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        await _upsert_workspace_edge(db, workspace_id, payload.source_node_id, payload.target_node_id)
+        await db.flush()
+        await db.refresh(existing)
+        return WorkspaceEdgeRead.model_validate(existing)
+
+    edge = await _upsert_workspace_edge(db, workspace_id, payload.source_node_id, payload.target_node_id)
+    await db.flush()
+    await db.refresh(edge)
+    return WorkspaceEdgeRead.model_validate(edge)
+
+
+@router.get("/{workspace_id}/nodes/{node_id}/subscribers", response_model=List[WorkspaceNodeRead])
+async def list_workspace_node_subscribers(
+    workspace_id: UUID,
+    node_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _ensure_access(db, workspace_id, current_user)
+    await _load_workspace_node(db, workspace_id, node_id)
+    result = await db.execute(
+        select(WorkspaceNode)
+        .join(WorkspaceEdge, WorkspaceEdge.source_node_id == WorkspaceNode.node_id)
+        .where(
+            WorkspaceEdge.workspace_id == workspace_id,
+            WorkspaceEdge.target_node_id == node_id,
+            WorkspaceEdge.edge_type == "subscription",
+            WorkspaceEdge.status == "active",
+            WorkspaceNode.node_type == "agent",
+        )
+        .order_by(WorkspaceNode.display_name.asc())
+    )
+    return [WorkspaceNodeRead.model_validate(node) for node in result.scalars().all()]
+
+
 @router.get("/{workspace_id}", response_model=WorkspaceDetailRead)
 async def get_workspace(
     workspace_id: UUID,
@@ -691,7 +902,8 @@ async def get_workspace(
     messages = await _message_reads(db, workspace_id)
     goals = await _goal_reads(db, workspace_id)
     nodes = await _node_reads(db, workspace_id)
-    return WorkspaceDetailRead(**data.model_dump(), messages=messages, goals=goals, nodes=nodes)
+    edges = await _edge_reads(db, workspace_id)
+    return WorkspaceDetailRead(**data.model_dump(), messages=messages, goals=goals, nodes=nodes, edges=edges)
 
 
 @router.put("/{workspace_id}/agents", response_model=WorkspaceRead)

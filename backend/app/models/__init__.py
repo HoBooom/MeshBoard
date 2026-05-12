@@ -2,7 +2,7 @@
 
 from .user import User, UserRole
 from .agent import Agent, AgentSubscriptionRule
-from .workspace import Workspace, Goal, WorkspaceAgent, WorkspaceMember, WorkspaceNode, WorkspaceAccessRequest
+from .workspace import Workspace, Goal, WorkspaceAgent, WorkspaceMember, WorkspaceNode, WorkspaceEdge, WorkspaceAccessRequest
 from .policy import Policy, AgentPolicy
 from .certification import Certification, AgentCertification
 from .conversation import Conversation
@@ -13,7 +13,7 @@ from .notice import Notice
 __all__ = [
     "User", "UserRole",
     "Agent", "AgentSubscriptionRule",
-    "Workspace", "Goal", "WorkspaceAgent", "WorkspaceMember", "WorkspaceNode", "WorkspaceAccessRequest",
+    "Workspace", "Goal", "WorkspaceAgent", "WorkspaceMember", "WorkspaceNode", "WorkspaceEdge", "WorkspaceAccessRequest",
     "Policy", "AgentPolicy",
     "Certification", "AgentCertification",
     "Conversation",

@@ -122,6 +122,43 @@ class WorkspaceNode(Base):
     )
 
 
+class WorkspaceEdge(Base):
+    __tablename__ = "workspace_edges"
+
+    edge_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("workspaces.workspace_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_node_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("workspace_nodes.node_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    target_node_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("workspace_nodes.node_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    edge_type: Mapped[str] = mapped_column(String(30), nullable=False, default="subscription")
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        CheckConstraint("edge_type IN ('subscription')", name="ck_workspace_edges_edge_type"),
+        CheckConstraint("status IN ('active','disabled')", name="ck_workspace_edges_status"),
+        UniqueConstraint(
+            "workspace_id",
+            "source_node_id",
+            "target_node_id",
+            "edge_type",
+            name="uq_workspace_edges_subscription",
+        ),
+    )
+
+
 class WorkspaceAccessRequest(Base):
     __tablename__ = "workspace_access_requests"
 

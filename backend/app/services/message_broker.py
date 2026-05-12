@@ -14,13 +14,9 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.agent import AgentSubscriptionRule
 from app.models.message import Message, MessageHeader, MessageReceipt
-from app.models.workspace import WorkspaceAgent
+from app.models.workspace import WorkspaceAgent, WorkspaceEdge, WorkspaceNode
 from app.schemas.message import PublishMessageRequest
-
-
-PRIORITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
 
 def build_inline_body_ref(payload: dict) -> str:
@@ -61,26 +57,8 @@ async def publish_message_header(
     return header
 
 
-def _rule_matches(rule: AgentSubscriptionRule, header: MessageHeader) -> tuple[bool, str]:
-    if not rule.is_active:
-        return False, "subscription rule inactive"
-    if rule.ignore_senders and header.sender_id in rule.ignore_senders:
-        return False, "sender ignored"
-    if rule.ignore_tags and set(rule.ignore_tags).intersection(header.tags or []):
-        return False, "tag ignored"
-    if rule.watch_domains and header.domain not in rule.watch_domains:
-        return False, "domain not watched"
-    if rule.watch_intents and header.intent not in rule.watch_intents:
-        return False, "intent not watched"
-    if rule.watch_tags and not set(rule.watch_tags).intersection(header.tags or []):
-        return False, "tag not watched"
-    if PRIORITY_RANK[header.priority] < PRIORITY_RANK[rule.min_priority]:
-        return False, "priority below rule threshold"
-    return True, "matched subscription rule"
-
-
 async def route_workspace_message(db: AsyncSession, header: MessageHeader) -> dict:
-    """워크스페이스 메시지를 Slack형 메시지 큐와 구독 receipt 로 라우팅합니다."""
+    """워크스페이스 메시지를 node subscription edge 기반 receipt 로 라우팅합니다."""
     if header.workspace_id is None:
         return {
             "queued": False,
@@ -100,27 +78,60 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader) -> di
             content=header.body_ref,
         )
     )
-    result = await db.execute(
-        select(WorkspaceAgent.agent_id, AgentSubscriptionRule)
-        .outerjoin(AgentSubscriptionRule, AgentSubscriptionRule.agent_id == WorkspaceAgent.agent_id)
-        .where(WorkspaceAgent.workspace_id == header.workspace_id)
+
+    workspace_agent_ids = list(
+        (
+            await db.execute(
+                select(WorkspaceAgent.agent_id).where(WorkspaceAgent.workspace_id == header.workspace_id)
+            )
+        ).scalars().all()
     )
+    workspace_agent_id_set = set(workspace_agent_ids)
     matched_agent_ids = []
-    ignored_agent_ids = []
     receipt_ids = []
-    for agent_id, rule in result.all():
-        if rule is None:
-            ignored_agent_ids.append(agent_id)
-            continue
-        matched, reason = _rule_matches(rule, header)
-        if not matched:
-            ignored_agent_ids.append(agent_id)
-            continue
-        receipt = MessageReceipt(message_id=header.message_id, agent_id=agent_id, decision="consumed", reason=reason)
+
+    if header.sender_type in {"user", "agent"}:
+        sender_node = (
+            await db.execute(
+                select(WorkspaceNode).where(
+                    WorkspaceNode.workspace_id == header.workspace_id,
+                    WorkspaceNode.node_type == header.sender_type,
+                    WorkspaceNode.ref_id == header.sender_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if sender_node is not None:
+            result = await db.execute(
+                select(WorkspaceNode.ref_id)
+                .join(WorkspaceEdge, WorkspaceEdge.source_node_id == WorkspaceNode.node_id)
+                .where(
+                    WorkspaceEdge.workspace_id == header.workspace_id,
+                    WorkspaceEdge.target_node_id == sender_node.node_id,
+                    WorkspaceEdge.edge_type == "subscription",
+                    WorkspaceEdge.status == "active",
+                    WorkspaceNode.workspace_id == header.workspace_id,
+                    WorkspaceNode.node_type == "agent",
+                    WorkspaceNode.status != "error",
+                )
+            )
+            matched_agent_ids = [
+                agent_id
+                for agent_id in dict.fromkeys(result.scalars().all())
+                if agent_id in workspace_agent_id_set
+            ]
+
+    for agent_id in matched_agent_ids:
+        receipt = MessageReceipt(
+            message_id=header.message_id,
+            agent_id=agent_id,
+            decision="consumed",
+            reason="matched workspace subscription edge",
+        )
         db.add(receipt)
         await db.flush()
-        matched_agent_ids.append(agent_id)
         receipt_ids.append(receipt.receipt_id)
+
+    ignored_agent_ids = [agent_id for agent_id in workspace_agent_ids if agent_id not in set(matched_agent_ids)]
 
     header.processed_count = len(matched_agent_ids)
     await db.flush()

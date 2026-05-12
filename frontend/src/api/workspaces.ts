@@ -68,6 +68,17 @@ export interface WorkspaceNode {
   updated_at: string;
 }
 
+export interface WorkspaceEdge {
+  edge_id: string;
+  workspace_id: string;
+  source_node_id: string;
+  target_node_id: string;
+  edge_type: 'subscription';
+  status: 'active' | 'disabled';
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Goal {
   goal_id: string;
   workspace_id: string;
@@ -89,6 +100,7 @@ export interface WorkspaceDetail extends Workspace {
   messages: WorkspaceMessage[];
   goals: Goal[];
   nodes: WorkspaceNode[];
+  edges: WorkspaceEdge[];
 }
 
 export interface WorkspaceAccessRequest {
@@ -150,6 +162,11 @@ export const workspacesApi = {
     description?: string;
     tags?: string[];
     agent_placements: Array<{ agent_id: string; quantity: number }>;
+    agent_subscriptions?: Array<{
+      source_agent_id: string;
+      target_node_type: 'user' | 'agent';
+      target_ref_id: string;
+    }>;
   }): Promise<Workspace> => {
     const res = await client.post<Workspace>('/workspaces', payload);
     return res.data;
@@ -181,6 +198,28 @@ export const workspacesApi = {
 
   listNodes: async (workspaceId: string): Promise<WorkspaceNode[]> => {
     const res = await client.get<WorkspaceNode[]>(`/workspaces/${workspaceId}/nodes`);
+    return res.data;
+  },
+
+  listEdges: async (workspaceId: string): Promise<WorkspaceEdge[]> => {
+    const res = await client.get<WorkspaceEdge[]>(`/workspaces/${workspaceId}/edges`);
+    return res.data;
+  },
+
+  createEdge: async (
+    workspaceId: string,
+    payload: {
+      source_node_id: string;
+      target_node_id: string;
+      edge_type?: 'subscription';
+    }
+  ): Promise<WorkspaceEdge> => {
+    const res = await client.post<WorkspaceEdge>(`/workspaces/${workspaceId}/edges`, payload);
+    return res.data;
+  },
+
+  listNodeSubscribers: async (workspaceId: string, nodeId: string): Promise<WorkspaceNode[]> => {
+    const res = await client.get<WorkspaceNode[]>(`/workspaces/${workspaceId}/nodes/${nodeId}/subscribers`);
     return res.data;
   },
 
