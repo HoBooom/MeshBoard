@@ -9,6 +9,7 @@ MESSAGE_HEADERS 에 기록하고, 이후 PH3-mesh-002 라우팅/큐 처리 단�
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -19,7 +20,10 @@ from app.models.agent import Agent
 from app.models.message import Message, MessageHeader, MessageReceipt
 from app.models.workspace import WorkspaceAgent, WorkspaceEdge, WorkspaceNode
 from app.schemas.message import PublishMessageRequest
-from app.services.agent_runtime import invoke_agent
+from app.services.agent_runtime import AGENT_INVALID_RESPONSE_MESSAGE, invoke_agent
+
+
+MENTION_RE = re.compile(r"(?<!\S)@([^\s@]+)")
 
 
 def build_inline_body_ref(payload: dict) -> str:
@@ -40,6 +44,43 @@ def _message_text_from_body_ref(body_ref: str) -> str:
         if value:
             return str(value)
     return json.dumps(payload, ensure_ascii=False)
+
+
+def _mention_key(display_name: str) -> str:
+    return re.sub(r"\s+", "_", display_name.strip()).lower()
+
+
+async def _direct_mentioned_agent_ids(
+    db: AsyncSession,
+    workspace_id,
+    body_ref: str,
+    workspace_agent_id_set: set,
+) -> tuple[bool, list]:
+    tokens = [match.group(1).lower() for match in MENTION_RE.finditer(_message_text_from_body_ref(body_ref))]
+    if not tokens:
+        return False, []
+
+    agent_nodes = (
+        await db.execute(
+            select(WorkspaceNode).where(
+                WorkspaceNode.workspace_id == workspace_id,
+                WorkspaceNode.node_type == "agent",
+                WorkspaceNode.status != "error",
+            )
+        )
+    ).scalars().all()
+    agent_id_by_token = {
+        _mention_key(node.display_name): node.ref_id
+        for node in agent_nodes
+        if node.ref_id in workspace_agent_id_set
+    }
+
+    matched_agent_ids = []
+    for token in tokens:
+        agent_id = agent_id_by_token.get(token)
+        if agent_id is not None and agent_id not in matched_agent_ids:
+            matched_agent_ids.append(agent_id)
+    return True, matched_agent_ids
 
 
 async def publish_message_header(
@@ -74,6 +115,93 @@ async def publish_message_header(
     return header
 
 
+async def _publish_system_workspace_message(
+    db: AsyncSession,
+    source_header: MessageHeader,
+    message: str,
+) -> MessageHeader:
+    system_header = MessageHeader(
+        sender_id=source_header.sender_id,
+        sender_type="system",
+        sender_name="System",
+        domain=source_header.domain,
+        intent="routing_notice",
+        priority="high",
+        tags=list(dict.fromkeys([*(source_header.tags or []), "system", "routing_notice"])),
+        target_ids=[source_header.sender_id],
+        target_roles=[],
+        scope=source_header.scope,
+        execution_tree_id=source_header.execution_tree_id,
+        workspace_id=source_header.workspace_id,
+        conversation_id=source_header.conversation_id,
+        body_ref=build_inline_body_ref(
+            {
+                "message": message,
+                "in_reply_to": str(source_header.message_id),
+                "severity": "error",
+            }
+        ),
+        processed_count=0,
+    )
+    db.add(system_header)
+    await db.flush()
+    db.add(
+        Message(
+            message_id=system_header.message_id,
+            workspace_id=system_header.workspace_id,
+            conversation_id=system_header.conversation_id,
+            participant_id=system_header.sender_id,
+            participant_type="system",
+            content=system_header.body_ref,
+        )
+    )
+    return system_header
+
+
+async def _publish_agent_workspace_message(
+    db: AsyncSession,
+    source_header: MessageHeader,
+    agent: Agent,
+    answer: str,
+) -> MessageHeader:
+    response_header = MessageHeader(
+        sender_id=agent.agent_id,
+        sender_type="agent",
+        sender_name=agent.name,
+        domain=source_header.domain,
+        intent="agent_response",
+        priority=source_header.priority,
+        tags=list(dict.fromkeys([*(source_header.tags or []), "agent_response"])),
+        target_ids=[source_header.sender_id],
+        target_roles=[],
+        scope=source_header.scope,
+        execution_tree_id=source_header.execution_tree_id,
+        workspace_id=source_header.workspace_id,
+        conversation_id=source_header.conversation_id,
+        body_ref=build_inline_body_ref(
+            {
+                "message": answer,
+                "in_reply_to": str(source_header.message_id),
+                "agent_id": str(agent.agent_id),
+            }
+        ),
+        processed_count=0,
+    )
+    db.add(response_header)
+    await db.flush()
+    db.add(
+        Message(
+            message_id=response_header.message_id,
+            workspace_id=source_header.workspace_id,
+            conversation_id=source_header.conversation_id,
+            participant_id=agent.agent_id,
+            participant_type="agent",
+            content=response_header.body_ref,
+        )
+    )
+    return response_header
+
+
 async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, agent_invoker=invoke_agent) -> dict:
     """워크스페이스 메시지를 node subscription edge 기반 receipt 로 라우팅합니다."""
     if header.workspace_id is None:
@@ -104,10 +232,16 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
         ).scalars().all()
     )
     workspace_agent_id_set = set(workspace_agent_ids)
-    matched_agent_ids = []
+    has_direct_mention, matched_agent_ids = await _direct_mentioned_agent_ids(
+        db,
+        header.workspace_id,
+        header.body_ref,
+        workspace_agent_id_set,
+    )
+    route_reason = "matched direct @mention" if matched_agent_ids else "matched workspace subscription edge"
     receipt_ids = []
 
-    if header.sender_type in {"user", "agent"}:
+    if not has_direct_mention and header.sender_type in {"user", "agent"}:
         sender_node = (
             await db.execute(
                 select(WorkspaceNode).where(
@@ -142,7 +276,7 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
             message_id=header.message_id,
             agent_id=agent_id,
             decision="consumed",
-            reason="matched workspace subscription edge",
+            reason=route_reason,
         )
         db.add(receipt)
         await db.flush()
@@ -183,48 +317,22 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
                 result = await agent_invoker(agent=agent, user_message=user_message)
                 if result.get("error"):
                     raise RuntimeError(str(result["error"]))
-                answer = str(result.get("output") or "").strip() or "(빈 응답)"
-                response_header = MessageHeader(
-                    sender_id=agent.agent_id,
-                    sender_type="agent",
-                    sender_name=agent.name,
-                    domain=header.domain,
-                    intent="agent_response",
-                    priority=header.priority,
-                    tags=list(dict.fromkeys([*(header.tags or []), "agent_response"])),
-                    target_ids=[header.sender_id],
-                    target_roles=[],
-                    scope=header.scope,
-                    execution_tree_id=header.execution_tree_id,
-                    workspace_id=header.workspace_id,
-                    conversation_id=header.conversation_id,
-                    body_ref=build_inline_body_ref(
-                        {
-                            "message": answer,
-                            "in_reply_to": str(header.message_id),
-                            "agent_id": str(agent.agent_id),
-                        }
-                    ),
-                    processed_count=0,
-                )
-                db.add(response_header)
-                await db.flush()
-                db.add(
-                    Message(
-                        message_id=response_header.message_id,
-                        workspace_id=header.workspace_id,
-                        conversation_id=header.conversation_id,
-                        participant_id=agent.agent_id,
-                        participant_type="agent",
-                        content=response_header.body_ref,
-                    )
-                )
+                answer = str(result.get("output") or "").strip() or AGENT_INVALID_RESPONSE_MESSAGE
+                await _publish_agent_workspace_message(db, header, agent, answer)
                 agent_node.status = "active"
             except Exception:
+                await _publish_agent_workspace_message(db, header, agent, AGENT_INVALID_RESPONSE_MESSAGE)
                 agent_node.status = "error"
             finally:
                 agent_node.updated_at = datetime.now(timezone.utc)
                 await db.flush()
+    elif header.sender_type in {"user", "agent"}:
+        recipient_name = (header.sender_name or "사용자").strip() or "사용자"
+        await _publish_system_workspace_message(
+            db,
+            header,
+            f"{recipient_name}님께 응답가능한 에이전트가 없습니다",
+        )
 
     ignored_agent_ids = [agent_id for agent_id in workspace_agent_ids if agent_id not in set(matched_agent_ids)]
 

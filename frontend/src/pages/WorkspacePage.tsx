@@ -22,6 +22,7 @@ import {
   WorkspaceAccessRequest,
   WorkspaceDetail,
   WorkspaceJoinable,
+  WorkspaceMessage,
   workspacesApi,
 } from '../api/workspaces';
 import { useAuthStore } from '../stores/authStore';
@@ -40,6 +41,25 @@ function bodyPreview(bodyRef: string): string {
   } catch {
     return bodyRef;
   }
+}
+
+function mentionRangeAt(text: string, caret: number): { start: number; end: number; query: string } | null {
+  const beforeCaret = text.slice(0, caret);
+  const start = beforeCaret.lastIndexOf('@');
+  if (start < 0) return null;
+  const previous = start > 0 ? text[start - 1] : '';
+  if (previous && !/\s/.test(previous)) return null;
+  const query = beforeCaret.slice(start + 1);
+  if (/[\s@]/.test(query)) return null;
+  return { start, end: caret, query };
+}
+
+function mentionToken(displayName: string): string {
+  return `@${displayName.trim().replace(/\s+/g, '_')}`;
+}
+
+function mentionKey(displayName: string): string {
+  return displayName.trim().replace(/\s+/g, '_').toLowerCase();
 }
 
 function agentStatus(index: number): 'active' | 'processing' | 'idle' {
@@ -107,7 +127,11 @@ export default function WorkspacePage() {
   const [subscriptionFilter, setSubscriptionFilter] = useState<'all' | 'user' | 'agent'>('all');
   const [draftAgentName, setDraftAgentName] = useState('');
   const [draftAgentPurpose, setDraftAgentPurpose] = useState('');
-  const [messageText, setMessageText] = useState('E001 사번의 연차 잔여일을 확인해줘');
+  const [messageText, setMessageText] = useState('');
+  const [mentionRange, setMentionRange] = useState<{ start: number; end: number; query: string } | null>(null);
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+  const [optimisticMessages, setOptimisticMessages] = useState<WorkspaceMessage[]>([]);
+  const [typingAgentIds, setTypingAgentIds] = useState<string[]>([]);
   const [publishResult, setPublishResult] = useState<PublishMessageResult | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
   const [expandedMessageId, setExpandedMessageId] = useState<string | null>(null);
@@ -128,6 +152,7 @@ export default function WorkspacePage() {
   const [mapNodes, setMapNodes, onMapNodesChange] = useNodesState<Node>([]);
   const [mapEdges, setMapEdges, onMapEdgesChange] = useEdgesState<Edge>([]);
   const messageFeedEndRef = useRef<HTMLDivElement | null>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   const roles = new Set(user?.roles || []);
   const canCreateWorkspace =
@@ -143,14 +168,37 @@ export default function WorkspacePage() {
   const topLevelGoals = detail?.goals.filter((goal) => !goal.parent_goal_id) || [];
   const workspaceMembers = detail?.nodes.filter((node) => node.node_type === 'user') || [];
   const activeMessages = useMemo(
-    () =>
-      selectedGoal?.conversation_id
-        ? detail?.messages.filter((message) => message.conversation_id === selectedGoal.conversation_id) || []
-        : detail?.messages || [],
-    [detail?.messages, selectedGoal?.conversation_id]
+    () => {
+      const messages = [...(detail?.messages || []), ...optimisticMessages];
+      return selectedGoal?.conversation_id
+        ? messages.filter((message) => message.conversation_id === selectedGoal.conversation_id)
+        : messages;
+    },
+    [detail?.messages, optimisticMessages, selectedGoal?.conversation_id]
   );
   const selectedMapNode = mapNodes.find((node) => node.id === selectedMapNodeId);
   const selectedMapEdge = mapEdges.find((edge) => edge.id === selectedMapEdgeId);
+  const mentionCandidates = useMemo(() => {
+    if (!detail || !mentionRange) return [];
+    const query = mentionRange.query.toLowerCase();
+    return detail.nodes
+      .filter((node) => {
+        const name = node.display_name.toLowerCase();
+        return !query || name.includes(query) || node.node_type.includes(query);
+      })
+      .sort((a, b) => {
+        if (a.node_type !== b.node_type) return a.node_type === 'user' ? -1 : 1;
+        return a.display_name.localeCompare(b.display_name);
+      })
+      .slice(0, 8);
+  }, [detail, mentionRange]);
+  const typingAgents = useMemo(
+    () =>
+      detail?.placements
+        .filter((placement) => typingAgentIds.includes(placement.agent.agent_id))
+        .map((placement) => placement.agent) || [],
+    [detail?.placements, typingAgentIds]
+  );
 
   const loadList = async () => {
     setLoading(true);
@@ -208,8 +256,12 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     if (view !== 'detail') return;
-    messageFeedEndRef.current?.scrollIntoView({ block: 'end' });
-  }, [view, detail?.messages.length]);
+    messageFeedEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
+  }, [view, detail?.messages.length, optimisticMessages.length, typingAgentIds.length]);
+
+  useEffect(() => {
+    setActiveMentionIndex((index) => Math.min(index, Math.max(mentionCandidates.length - 1, 0)));
+  }, [mentionCandidates.length]);
 
   const openDetail = async (workspaceId: string) => {
     setLoading(true);
@@ -217,6 +269,8 @@ export default function WorkspacePage() {
     try {
       const data = await workspacesApi.get(workspaceId);
       setDetail(data);
+      setOptimisticMessages([]);
+      setTypingAgentIds([]);
       setView('detail');
     } catch (err) {
       console.error(err);
@@ -371,25 +425,98 @@ export default function WorkspacePage() {
     }
   };
 
-  const markRoutedAgentsProcessing = () => {
-    if (!detail || !user?.user_id) return;
+  const routedAgentIdsForMessage = (text: string) => {
+    if (!detail || !user?.user_id) return [];
+
+    const mentionedTokens = Array.from(text.matchAll(/(?<!\S)@([^\s@]+)/g)).map((match) => match[1].toLowerCase());
+    if (mentionedTokens.length > 0) {
+      const agentIdByToken = new Map(
+        detail.nodes
+          .filter((node) => node.node_type === 'agent' && node.status !== 'error')
+          .map((node) => [mentionKey(node.display_name), node.ref_id])
+      );
+      return mentionedTokens
+        .map((token) => agentIdByToken.get(token))
+        .filter((agentId): agentId is string => Boolean(agentId))
+        .filter((agentId, index, agentIds) => agentIds.indexOf(agentId) === index);
+    }
+
     const senderNode = detail.nodes.find(
       (node) => node.node_type === 'user' && node.ref_id === user.user_id
     );
-    if (!senderNode) return;
-    const routedAgentNodeIds = new Set(
-      detail.edges
-        .filter((edge) => edge.edge_type === 'subscription' && edge.status === 'active' && edge.target_node_id === senderNode.node_id)
-        .map((edge) => edge.source_node_id)
+    if (!senderNode) return [];
+    const agentRefIdByNodeId = new Map(
+      detail.nodes
+        .filter((node) => node.node_type === 'agent')
+        .map((node) => [node.node_id, node.ref_id])
     );
-    if (routedAgentNodeIds.size === 0) return;
+    return detail.edges
+      .filter((edge) => edge.edge_type === 'subscription' && edge.status === 'active' && edge.target_node_id === senderNode.node_id)
+      .map((edge) => agentRefIdByNodeId.get(edge.source_node_id))
+      .filter((agentId): agentId is string => Boolean(agentId))
+      .filter((agentId, index, agentIds) => agentIds.indexOf(agentId) === index);
+  };
+
+  const markRoutedAgentsProcessing = (text: string) => {
+    if (!detail) return [];
+    const routedAgentIds = routedAgentIdsForMessage(text);
+    if (routedAgentIds.length === 0) return [];
+    const routedAgentIdSet = new Set(routedAgentIds);
+    setTypingAgentIds(routedAgentIds);
     setDetail({
       ...detail,
       nodes: detail.nodes.map((node) =>
-        node.node_type === 'agent' && routedAgentNodeIds.has(node.node_id)
+        node.node_type === 'agent' && routedAgentIdSet.has(node.ref_id)
           ? { ...node, status: 'processing' }
           : node
       ),
+    });
+    return routedAgentIds;
+  };
+
+  const addOptimisticUserMessage = (text: string) => {
+    if (!detail || !user?.user_id) return null;
+    const messageId =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? `local-${crypto.randomUUID()}`
+        : `local-${Date.now()}`;
+    const optimisticMessage: WorkspaceMessage = {
+      message_id: messageId,
+      sender_id: user.user_id,
+      sender_type: 'user',
+      sender_name: user.name,
+      domain: 'workspace',
+      intent: selectedGoal ? 'goal_message' : 'operator_message',
+      conversation_id: selectedGoal?.conversation_id || null,
+      priority: 'medium',
+      tags: selectedGoal ? ['workspace', 'goal'] : ['workspace'],
+      body_ref: `inline:json:${JSON.stringify({ message: text })}`,
+      sent_at: new Date().toISOString(),
+      processed_count: 0,
+      queued: true,
+      receipt_count: 0,
+    };
+    setOptimisticMessages((messages) => [...messages, optimisticMessage]);
+    return messageId;
+  };
+
+  const updateMentionRange = (text: string, caret: number) => {
+    setMentionRange(mentionRangeAt(text, caret));
+    setActiveMentionIndex(0);
+  };
+
+  const insertMention = (candidate: (typeof mentionCandidates)[number]) => {
+    if (!mentionRange) return;
+    const token = mentionToken(candidate.display_name);
+    const prefix = messageText.slice(0, mentionRange.start);
+    const suffix = messageText.slice(mentionRange.end);
+    const nextText = `${prefix}${token} ${suffix}`;
+    const nextCaret = prefix.length + token.length + 1;
+    setMessageText(nextText);
+    setMentionRange(null);
+    window.requestAnimationFrame(() => {
+      messageInputRef.current?.focus();
+      messageInputRef.current?.setSelectionRange(nextCaret, nextCaret);
     });
   };
 
@@ -398,7 +525,10 @@ export default function WorkspacePage() {
     const nextMessage = messageText.trim();
     if (!nextMessage) return;
     setError(null);
-    markRoutedAgentsProcessing();
+    const optimisticMessageId = addOptimisticUserMessage(nextMessage);
+    markRoutedAgentsProcessing(nextMessage);
+    setMessageText('');
+    setMentionRange(null);
     try {
       const result = await workspacesApi.publish(detail.workspace_id, {
         domain: 'workspace',
@@ -408,18 +538,18 @@ export default function WorkspacePage() {
         priority: 'medium',
         conversation_id: selectedGoal?.conversation_id,
       });
-      setMessageText('');
       setPublishResult(result);
-      if (result.routing.matched_agent_ids.length === 0) {
-        setError('응답 가능한 에이전트가 없습니다.');
-      }
       const nextDetail = await workspacesApi.get(detail.workspace_id);
       if (selectedGoal?.conversation_id) {
         nextDetail.messages = await workspacesApi.listMessages(detail.workspace_id, selectedGoal.conversation_id);
       }
+      setOptimisticMessages((messages) => messages.filter((message) => message.message_id !== optimisticMessageId));
+      setTypingAgentIds([]);
       setDetail(nextDetail);
     } catch (err) {
       console.error(err);
+      setOptimisticMessages((messages) => messages.filter((message) => message.message_id !== optimisticMessageId));
+      setTypingAgentIds([]);
       setError('메시지 전송 중 오류가 발생했습니다.');
     }
   };
@@ -1098,24 +1228,25 @@ export default function WorkspacePage() {
                     </div>
                   ) : (
                     activeMessages.map((message) => {
-                      const isMine = message.sender_id === user?.user_id;
+                      const isSystem = message.sender_type === 'system';
+                      const isMine = message.sender_type === 'user' && message.sender_id === user?.user_id;
                       const isExpanded = expandedMessageId === message.message_id;
                       return (
                         <div key={message.message_id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
                           <div className={`flex max-w-[780px] gap-3 ${isMine ? 'flex-row-reverse' : ''}`}>
-                            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold ${isMine ? 'bg-apple-blue text-white' : 'bg-white text-black/70 shadow-sm'}`}>
+                            <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold ${isMine ? 'bg-apple-blue text-white' : isSystem ? 'bg-[#ff3b30] text-white' : 'bg-white text-black/70 shadow-sm'}`}>
                               {(isMine ? user?.name : message.sender_name || message.sender_type || 'A')?.charAt(0)}
                             </div>
                             <div className={`min-w-0 ${isMine ? 'items-end text-right' : 'items-start text-left'}`}>
                               <div className={`mb-1 flex items-center gap-2 ${isMine ? 'justify-end' : 'justify-start'}`}>
-                                <span className="text-[13px] font-semibold text-black/75">{isMine ? 'You' : message.sender_name || message.sender_type}</span>
+                                <span className={`text-[13px] font-semibold ${isSystem ? 'text-[#d70015]' : 'text-black/75'}`}>{isMine ? 'You' : message.sender_name || message.sender_type}</span>
                                 <span className="text-[11px] text-black/35">{new Date(message.sent_at).toLocaleString()}</span>
                               </div>
-                              <div className={`rounded-[18px] px-4 py-3 text-[14px] leading-6 shadow-sm ${isMine ? 'rounded-br-[6px] bg-apple-blue text-white' : 'rounded-bl-[6px] border border-black/6 bg-white text-black/78'}`}>
+                              <div className={`rounded-[18px] px-4 py-3 text-[14px] leading-6 shadow-sm ${isMine ? 'rounded-br-[6px] bg-apple-blue text-white' : isSystem ? 'rounded-bl-[6px] border border-[#ff3b30]/25 bg-[#fff2f2] text-[#d70015]' : 'rounded-bl-[6px] border border-black/6 bg-white text-black/78'}`}>
                                 {bodyPreview(message.body_ref)}
                               </div>
                               <button
-                                className={`mt-1.5 text-[11px] font-medium ${isMine ? 'text-apple-blue' : 'text-black/42 hover:text-apple-blue'}`}
+                                className={`mt-1.5 text-[11px] font-medium ${isMine ? 'text-apple-blue' : isSystem ? 'text-[#d70015]/70 hover:text-[#d70015]' : 'text-black/42 hover:text-apple-blue'}`}
                                 onClick={() => {
                                   setExpandedMessageId(isExpanded ? null : message.message_id);
                                   setInspectorMode('message');
@@ -1135,15 +1266,94 @@ export default function WorkspacePage() {
                       );
                     })
                   )}
+                  {typingAgents.map((agent) => (
+                    <div key={`typing-${agent.agent_id}`} className="flex justify-start">
+                      <div className="flex max-w-[780px] gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[13px] font-semibold text-black/70 shadow-sm">
+                          {agent.name.charAt(0)}
+                        </div>
+                        <div className="min-w-0 text-left">
+                          <div className="mb-1 flex items-center gap-2">
+                            <span className="text-[13px] font-semibold text-black/75">{agent.name}</span>
+                            <span className="text-[11px] text-black/35">typing</span>
+                          </div>
+                          <div className="inline-flex items-center gap-2 rounded-[18px] rounded-bl-[6px] border border-black/6 bg-white px-4 py-3 shadow-sm">
+                            <span className="text-[13px] font-medium text-black/58">생각중</span>
+                            <span className="flex h-4 items-end gap-1">
+                              {[0, 1, 2].map((dot) => (
+                                <span
+                                  key={dot}
+                                  className="block h-2 w-2 animate-bounce rounded-full bg-apple-blue"
+                                  style={{ animationDelay: `${dot * 140}ms`, animationDuration: '860ms' }}
+                                />
+                              ))}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
                   <div ref={messageFeedEndRef} />
                 </div>
                 <div className="border-t border-black/10 bg-white/90 p-3">
-                  <div className="flex items-center gap-2 rounded-[14px] border border-black/10 bg-[#f7f8fa] p-1.5 shadow-inner">
+                  <div className="relative flex items-center gap-2 rounded-[14px] border border-black/10 bg-[#f7f8fa] p-1.5 shadow-inner">
+                    {mentionRange && mentionCandidates.length > 0 && (
+                      <div className="absolute bottom-[calc(100%+8px)] left-2 z-20 w-[min(360px,calc(100%-16px))] overflow-hidden rounded-[12px] border border-black/10 bg-white shadow-[0_14px_42px_rgba(0,0,0,0.16)]">
+                        {mentionCandidates.map((candidate, index) => {
+                          const active = index === activeMentionIndex;
+                          return (
+                            <button
+                              key={candidate.node_id}
+                              className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition ${active ? 'bg-apple-blue/10' : 'hover:bg-black/[0.04]'}`}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                insertMention(candidate);
+                              }}
+                            >
+                              <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${candidate.node_type === 'user' ? 'bg-apple-blue text-white' : 'bg-black/[0.07] text-black/65'}`}>
+                                {candidate.node_type === 'user' ? 'U' : 'A'}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[13px] font-semibold text-[#1d1d1f]">{candidate.display_name}</span>
+                                <span className="block text-[11px] text-black/38">{candidate.node_type} · {candidate.status}</span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                     <textarea
+                      ref={messageInputRef}
                       className="min-h-[36px] flex-1 resize-none bg-transparent px-3 py-1.5 text-[14px] leading-5 text-black/80 outline-none placeholder:text-black/35"
                       value={messageText}
-                      onChange={(e) => setMessageText(e.target.value)}
+                      onChange={(e) => {
+                        setMessageText(e.target.value);
+                        updateMentionRange(e.target.value, e.target.selectionStart);
+                      }}
+                      onSelect={(e) => updateMentionRange(e.currentTarget.value, e.currentTarget.selectionStart)}
                       onKeyDown={(e) => {
+                        if (mentionRange && mentionCandidates.length > 0) {
+                          if (e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            setActiveMentionIndex((index) => (index + 1) % mentionCandidates.length);
+                            return;
+                          }
+                          if (e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            setActiveMentionIndex((index) => (index - 1 + mentionCandidates.length) % mentionCandidates.length);
+                            return;
+                          }
+                          if ((e.key === 'Enter' || e.key === 'Tab') && !e.nativeEvent.isComposing) {
+                            e.preventDefault();
+                            insertMention(mentionCandidates[activeMentionIndex]);
+                            return;
+                          }
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setMentionRange(null);
+                            return;
+                          }
+                        }
                         if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) return;
                         e.preventDefault();
                         void publishMessage();

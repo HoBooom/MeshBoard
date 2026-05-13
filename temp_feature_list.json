@@ -235,7 +235,7 @@
         "area": "consumer_wb",
         "title": "@mention 자동완성 UI",
         "user_visible_behavior": "사용자는 메시지 입력창에서 @를 입력하면 메시지를 보낼 수 있는 사용자 또는 에이전트 목록을 보고 선택할 수 있다.",
-        "status": "not_started",
+        "status": "passing",
         "implementation_scope": [
           "메시지 입력창에서 @ 입력 감지",
           "현재 사용자가 접근 가능한 workspace_nodes 목록 표시",
@@ -244,12 +244,18 @@
           "agent/user 아이콘 구분"
         ],
         "verification": [
-          "1. @ 입력 시 mention 후보 목록이 표시된다.",
-          "2. 텍스트 입력에 따라 후보 목록이 필터링된다.",
-          "3. 후보 선택 시 입력창에 mention token이 삽입된다."
+          "✅ [2026-05-13] 1. @ 입력 시 mention 후보 목록이 표시된다.",
+          "✅ [2026-05-13] 2. 텍스트 입력에 따라 후보 목록이 필터링된다.",
+          "✅ [2026-05-13] 3. 후보 선택 시 입력창에 mention token이 삽입된다."
         ],
-        "evidence": [],
-        "notes": "Slack 스타일 UX의 핵심 기능."
+        "evidence": [
+          "frontend/src/pages/WorkspacePage.tsx — 메시지 입력 caret 기준 @ mention range 감지 구현",
+          "frontend/src/pages/WorkspacePage.tsx — 현재 워크스페이스 detail.nodes 기반 user/agent 후보 목록 표시 및 실시간 필터링 구현",
+          "frontend/src/pages/WorkspacePage.tsx — 후보별 U/A 아이콘, 상태, 표시명 렌더링 및 ArrowUp/ArrowDown/Enter/Tab/Escape 키보드 조작 지원",
+          "frontend/src/pages/WorkspacePage.tsx — 후보 선택 시 @표시명 mention token을 입력창에 삽입하고 caret 위치 복원",
+          "✅ `cd frontend && npm run build` 통과"
+        ],
+        "notes": "@mention UI 입력/선택 단계 구현 완료. mention 기반 직접 라우팅은 PH3-wb-008에서 처리."
       },
       {
         "id": "PH3-wb-008",

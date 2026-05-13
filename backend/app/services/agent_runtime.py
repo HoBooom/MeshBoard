@@ -54,6 +54,7 @@ GRAPH_AGENT_NODE = "agent_node"
 GRAPH_TOOL_NODE = "mcp_tool_node"
 GRAPH_END = "__end__"
 GRAPH_NODES = {GRAPH_AGENT_NODE, GRAPH_TOOL_NODE}
+AGENT_INVALID_RESPONSE_MESSAGE = "죄송합니다. 해당 AGENT가 정상적인 응답을 반환하지 못 했습니다."
 
 _CHECKPOINTER = MemorySaver()
 
@@ -252,7 +253,7 @@ def _build_agent_graph(
         }
 
         if parsed is None:
-            updates["final_output"] = raw_content or "(LLM 이 비어있는 응답을 반환했습니다.)"
+            updates["final_output"] = raw_content or AGENT_INVALID_RESPONSE_MESSAGE
             updates["transitions"] = [
                 _transition(GRAPH_AGENT_NODE, GRAPH_END, "non_json_final_fallback")
             ]
@@ -260,7 +261,7 @@ def _build_agent_graph(
 
         action = parsed.get("action")
         if action == "final":
-            updates["final_output"] = str(parsed.get("answer", "")).strip()
+            updates["final_output"] = str(parsed.get("answer", "")).strip() or AGENT_INVALID_RESPONSE_MESSAGE
             updates["transitions"] = [_transition(GRAPH_AGENT_NODE, GRAPH_END, "final")]
             return updates
 
