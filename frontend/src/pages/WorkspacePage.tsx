@@ -5,8 +5,10 @@ import {
   Controls,
   Edge,
   EdgeMouseHandler,
+  MarkerType,
   MiniMap,
   Node,
+  NodeChange,
   NodeMouseHandler,
   ReactFlow,
   useEdgesState,
@@ -149,8 +151,9 @@ export default function WorkspacePage() {
   const [mapFilter, setMapFilter] = useState<'all' | 'active' | 'processing' | 'idle' | 'error'>('all');
   const [selectedMapNodeId, setSelectedMapNodeId] = useState<string | null>(null);
   const [selectedMapEdgeId, setSelectedMapEdgeId] = useState<string | null>(null);
-  const [mapNodes, setMapNodes, onMapNodesChange] = useNodesState<Node>([]);
+  const [mapNodes, setMapNodes, applyMapNodeChanges] = useNodesState<Node>([]);
   const [mapEdges, setMapEdges, onMapEdgesChange] = useEdgesState<Edge>([]);
+  const [mapNodePositions, setMapNodePositions] = useState<Record<string, { x: number; y: number }>>({});
   const messageFeedEndRef = useRef<HTMLDivElement | null>(null);
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -199,6 +202,21 @@ export default function WorkspacePage() {
         .map((placement) => placement.agent) || [],
     [detail?.placements, typingAgentIds]
   );
+
+  const onMapNodesChange = (changes: NodeChange<Node>[]) => {
+    applyMapNodeChanges(changes);
+    setMapNodePositions((positions) => {
+      let changed = false;
+      const nextPositions = { ...positions };
+      changes.forEach((change) => {
+        if (change.type === 'position' && change.position) {
+          nextPositions[change.id] = change.position;
+          changed = true;
+        }
+      });
+      return changed ? nextPositions : positions;
+    });
+  };
 
   const loadList = async () => {
     setLoading(true);
@@ -271,6 +289,7 @@ export default function WorkspacePage() {
       setDetail(data);
       setOptimisticMessages([]);
       setTypingAgentIds([]);
+      setMapNodePositions({});
       setView('detail');
     } catch (err) {
       console.error(err);
@@ -615,73 +634,59 @@ export default function WorkspacePage() {
   useEffect(() => {
     if (!detail) return;
 
-    const agentStatusById = new Map(
-      detail.nodes
-        .filter((node) => node.node_type === 'agent')
-        .map((node) => [node.ref_id, node.status])
-    );
-    const expandedAgents = detail.placements.flatMap((placement) =>
-      Array.from({ length: placement.quantity }, (_, index) => {
-        const instanceNumber = index + 1;
-        const messageCount = activeMessages.filter(
-          (message) => message.sender_id === placement.agent.agent_id
-        ).length;
-        const fallbackStatus =
-          messageCount > 3 ? 'active' : index === 0 && messageCount > 0 ? 'processing' : 'idle';
-        const status = agentStatusById.get(placement.agent.agent_id) || fallbackStatus;
-        return {
-          id: `${placement.agent.agent_id}-${instanceNumber}`,
-          agentId: placement.agent.agent_id,
-          name: placement.quantity > 1 ? `${placement.agent.name} #${instanceNumber}` : placement.agent.name,
-          role: placement.agent.roles[0] || agentType(placement.agent.name),
-          type: agentType(placement.agent.name),
-          status: status as 'active' | 'processing' | 'idle' | 'error',
-          messageCount,
-          eventCount: messageCount + placement.agent.tools.length,
-          version: placement.agent.version,
-          tools: placement.agent.tools,
-          nodeType: 'agent' as const,
-        };
-      })
-    );
-    const expandedUsers = detail.nodes
-      .filter((node) => node.node_type === 'user')
-      .map((node) => {
-        const messageCount = activeMessages.filter((message) => message.sender_id === node.ref_id).length;
-        return {
-          id: `user-${node.node_id}`,
-          refId: node.ref_id,
-          name: node.display_name,
-          role: 'workspace member',
-          type: 'user',
-          status: node.status,
-          messageCount,
-          eventCount: messageCount,
-          version: '',
-          tools: [] as string[],
-          nodeType: 'user' as const,
-        };
-      });
-
-    const graphItems = [...expandedUsers, ...expandedAgents];
+    const agentById = new Map(detail.placements.map((placement) => [placement.agent.agent_id, placement]));
+    const edgeDegreeByNodeId = new Map<string, { incoming: number; outgoing: number }>();
+    detail.edges.forEach((edge) => {
+      const sourceDegree = edgeDegreeByNodeId.get(edge.source_node_id) || { incoming: 0, outgoing: 0 };
+      sourceDegree.outgoing += 1;
+      edgeDegreeByNodeId.set(edge.source_node_id, sourceDegree);
+      const targetDegree = edgeDegreeByNodeId.get(edge.target_node_id) || { incoming: 0, outgoing: 0 };
+      targetDegree.incoming += 1;
+      edgeDegreeByNodeId.set(edge.target_node_id, targetDegree);
+    });
+    const graphItems = detail.nodes.map((node) => {
+      const placement = node.node_type === 'agent' ? agentById.get(node.ref_id) : undefined;
+      const messageCount = activeMessages.filter((message) => message.sender_id === node.ref_id).length;
+      const degree = edgeDegreeByNodeId.get(node.node_id) || { incoming: 0, outgoing: 0 };
+      return {
+        id: node.node_id,
+        refId: node.ref_id,
+        name: node.display_name,
+        role: node.node_type === 'agent'
+          ? placement?.agent.roles[0] || agentType(node.display_name)
+          : 'workspace member',
+        type: node.node_type === 'agent' ? agentType(node.display_name) : 'user',
+        status: node.status,
+        messageCount,
+        eventCount: messageCount + degree.incoming + degree.outgoing,
+        version: placement?.agent.version || '',
+        tools: placement?.agent.tools || [],
+        visibility: placement?.agent.visibility || '',
+        nodeType: node.node_type,
+        incoming: degree.incoming,
+        outgoing: degree.outgoing,
+      };
+    });
     const filteredGraphItems = graphItems.filter((item) =>
       mapFilter === 'all' ? true : item.status === mapFilter
     );
     const columns = Math.max(3, Math.ceil(Math.sqrt(Math.max(filteredGraphItems.length, 1))));
     const nodes: Node[] = filteredGraphItems.map((item, index) => {
-      const x = (index % columns) * 260;
-      const y = Math.floor(index / columns) * 170;
+      const defaultPosition = {
+        x: (index % columns) * 260,
+        y: Math.floor(index / columns) * 170,
+      };
       const statusColor = topologyStatusTone(item.status);
       const highlighted =
-        (item.nodeType === 'agent' && selectedAgentId === item.agentId) ||
+        (item.nodeType === 'agent' && selectedAgentId === item.refId) ||
         selectedMapNodeId === item.id;
 
       return {
         id: item.id,
-        position: { x, y },
+        position: mapNodePositions[item.id] || defaultPosition,
         data: {
-          agentId: item.nodeType === 'agent' ? item.agentId : undefined,
-          refId: item.nodeType === 'user' ? item.refId : item.agentId,
+          agentId: item.nodeType === 'agent' ? item.refId : undefined,
+          refId: item.refId,
           nodeType: item.nodeType,
           displayName: item.name,
           status: item.status,
@@ -689,8 +694,12 @@ export default function WorkspacePage() {
           messageCount: item.messageCount,
           eventCount: item.eventCount,
           tools: item.tools,
+          version: item.version,
+          visibility: item.visibility,
+          incoming: item.incoming,
+          outgoing: item.outgoing,
           label: (
-            <div className={`min-w-[210px] rounded-[18px] border bg-white px-4 py-3 shadow-sm ${highlighted ? 'border-apple-blue shadow-[0_0_0_4px_rgba(0,113,227,0.14)]' : 'border-black/10'}`}>
+            <div className={`min-w-[220px] rounded-[14px] border bg-white px-4 py-3 shadow-sm ${highlighted ? 'border-apple-blue shadow-[0_0_0_4px_rgba(0,113,227,0.14)]' : item.nodeType === 'user' ? 'border-[#0071e3]/20' : 'border-black/10'}`}>
               <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${item.nodeType === 'user' ? 'bg-[#0071e3] text-white' : 'bg-black/[0.06] text-black/60'}`}>
@@ -705,7 +714,7 @@ export default function WorkspacePage() {
               </div>
               <div className="grid grid-cols-2 gap-2 text-[11px] text-black/55">
                 <span className="rounded-[9px] bg-black/[0.04] px-2 py-1">msg {item.messageCount}</span>
-                <span className="rounded-[9px] bg-black/[0.04] px-2 py-1">event {item.eventCount}</span>
+                <span className="rounded-[9px] bg-black/[0.04] px-2 py-1">edge {item.incoming + item.outgoing}</span>
               </div>
               <p className="mt-2 text-[11px] text-black/40">
                 {item.status}{item.nodeType === 'agent' ? ` · v${item.version}` : ' · member'}
@@ -723,55 +732,40 @@ export default function WorkspacePage() {
     });
 
     const nodeIds = new Set(nodes.map((node) => node.id));
-    const messageEdges: Edge[] = [];
-    const graphNodeByRefId = new Map<string, string>();
-    expandedAgents.forEach((agent) => {
-      if (!graphNodeByRefId.has(agent.agentId)) {
-        graphNodeByRefId.set(agent.agentId, agent.id);
-      }
-    });
-    expandedUsers.forEach((member) => {
-      graphNodeByRefId.set(member.refId, member.id);
-    });
-
-    activeMessages.forEach((message, index, messages) => {
-      const nextMessage = messages[index + 1];
-      if (!nextMessage) return;
-      const source = graphNodeByRefId.get(message.sender_id);
-      const target = graphNodeByRefId.get(nextMessage.sender_id);
-      if (!source || !target || source === target || !nodeIds.has(source) || !nodeIds.has(target)) return;
-      const edgeId = `message-${source}-${target}`;
-      if (messageEdges.some((edge) => edge.id === edgeId)) return;
-      messageEdges.push({
-        id: edgeId,
-        source,
-        target,
-        animated: true,
-        label: 'message',
-        data: { relation_type: 'message', last_interaction_at: nextMessage.sent_at },
-        style: { stroke: '#0071e3', strokeWidth: 2 },
-        labelStyle: { fill: '#3a3a3c', fontSize: 11 },
+    const nodeById = new Map(detail.nodes.map((node) => [node.node_id, node]));
+    const subscriptionEdges: Edge[] = detail.edges
+      .filter((edge) => nodeIds.has(edge.source_node_id) && nodeIds.has(edge.target_node_id))
+      .map((edge) => {
+        const active = edge.status === 'active';
+        const sourceNode = nodeById.get(edge.source_node_id);
+        const targetNode = nodeById.get(edge.target_node_id);
+        return {
+          id: edge.edge_id,
+          source: edge.source_node_id,
+          target: edge.target_node_id,
+          animated: active,
+          label: 'subscription',
+          markerEnd: { type: MarkerType.ArrowClosed, color: active ? '#0071e3' : '#8e8e93' },
+          data: {
+            relation_type: edge.edge_type,
+            status: edge.status,
+            sourceName: sourceNode?.display_name || edge.source_node_id,
+            targetName: targetNode?.display_name || edge.target_node_id,
+            created_at: edge.created_at,
+            updated_at: edge.updated_at,
+          },
+          style: {
+            stroke: active ? '#0071e3' : '#8e8e93',
+            strokeWidth: active ? 2.2 : 1.6,
+            strokeDasharray: active ? undefined : '5 5',
+          },
+          labelStyle: { fill: '#3a3a3c', fontSize: 11, fontWeight: 600 },
+        };
       });
-    });
-
-    const fallbackEdges: Edge[] = [];
-    if (messageEdges.length === 0 && nodes.length > 1) {
-      nodes.slice(1).forEach((node, index) => {
-        fallbackEdges.push({
-          id: `supervision-${nodes[0].id}-${node.id}`,
-          source: nodes[0].id,
-          target: node.id,
-          label: index % 2 === 0 ? 'supervision' : 'data_flow',
-          data: { relation_type: index % 2 === 0 ? 'supervision' : 'data_flow' },
-          style: { stroke: '#8e8e93', strokeDasharray: '5 5' },
-          labelStyle: { fill: '#6e6e73', fontSize: 11 },
-        });
-      });
-    }
 
     setMapNodes(nodes);
-    setMapEdges(messageEdges.length > 0 ? messageEdges : fallbackEdges);
-  }, [activeMessages, detail, mapFilter, selectedAgentId, selectedMapNodeId, setMapEdges, setMapNodes]);
+    setMapEdges(subscriptionEdges);
+  }, [activeMessages, detail, mapFilter, mapNodePositions, selectedAgentId, selectedMapNodeId, setMapEdges, setMapNodes]);
 
   const onTopologyNodeClick: NodeMouseHandler = (_, node) => {
     setSelectedMapNodeId(node.id);
@@ -970,6 +964,16 @@ export default function WorkspacePage() {
       null;
     const expandedMessage = detail.messages.find((message) => message.message_id === expandedMessageId);
     const agentLabel = selectedAgent ? selectedAgent.agent.name : 'environment-messages';
+    const workspaceNodeById = new Map(detail.nodes.map((node) => [node.node_id, node]));
+    const selectedSubscribedNodes = selectedMapNodeId
+      ? detail.edges
+          .filter((edge) => edge.source_node_id === selectedMapNodeId)
+          .map((edge) => ({
+            edge,
+            node: workspaceNodeById.get(edge.target_node_id),
+          }))
+          .filter((item) => Boolean(item.node))
+      : [];
     const detailAgentStatusById = new Map(
       detail.nodes
         .filter((node) => node.node_type === 'agent')
@@ -1396,6 +1400,9 @@ export default function WorkspacePage() {
                     fitView
                     minZoom={0.25}
                     maxZoom={1.8}
+                    nodesDraggable
+                    nodesConnectable={false}
+                    edgesFocusable
                   >
                     <Background color="#d1d1d6" gap={18} />
                     <Controls />
@@ -1458,13 +1465,27 @@ export default function WorkspacePage() {
                       <>
                         <InspectorKV label="Selected edge" value={selectedMapEdge.id} />
                         <InspectorKV label="Relation" value={String(selectedMapEdge.data?.relation_type || selectedMapEdge.label || '-')} />
-                        <InspectorKV label="Source → Target" value={`${selectedMapEdge.source} → ${selectedMapEdge.target}`} />
+                        <InspectorKV label="Status" value={String(selectedMapEdge.data?.status || '-')} />
+                        <InspectorKV label="Source → Target" value={`${String(selectedMapEdge.data?.sourceName || selectedMapEdge.source)} → ${String(selectedMapEdge.data?.targetName || selectedMapEdge.target)}`} />
                       </>
                     )}
                   </InspectorSection>
                   <InspectorSection title="Graph Relationships">
-                    <div className="rounded-[14px] border border-dashed border-white/16 p-4 text-[13px] leading-5 text-white/45">
-                      Future-ready placeholder for agent graph edges, message dependencies, and parallel execution groups.
+                    <div className="space-y-2">
+                      {mapEdges.length === 0 ? (
+                        <div className="rounded-[14px] bg-white/[0.04] p-4 text-[13px] leading-5 text-white/50">
+                          구독 관계가 없습니다.
+                        </div>
+                      ) : (
+                        mapEdges.slice(0, 8).map((edge) => (
+                          <div key={edge.id} className="rounded-[12px] bg-white/[0.04] px-3 py-2 text-[12px] leading-5 text-white/58">
+                            <span className="font-medium text-white/76">{String(edge.data?.sourceName || edge.source)}</span>
+                            <span className="text-white/32"> → </span>
+                            <span className="font-medium text-white/76">{String(edge.data?.targetName || edge.target)}</span>
+                            <span className="ml-2 text-white/35">{String(edge.data?.status || '-')}</span>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </InspectorSection>
                 </>
@@ -1490,10 +1511,34 @@ export default function WorkspacePage() {
                       <>
                         <InspectorKV label="Map status" value={String(selectedMapNode.data.status || '-')} />
                         <InspectorKV label="Recent node messages" value={String(selectedMapNode.data.messageCount || 0)} />
-                        <InspectorKV label="Recent node events" value={String(selectedMapNode.data.eventCount || 0)} />
+                        <InspectorKV label="Incoming subscriptions" value={String(selectedMapNode.data.incoming || 0)} />
+                        <InspectorKV label="Outgoing subscriptions" value={String(selectedMapNode.data.outgoing || 0)} />
                       </>
                     )}
                   </InspectorSection>
+                  {selectedMapNode && (
+                    <InspectorSection title="Subscribe Node">
+                      {selectedSubscribedNodes.length === 0 ? (
+                        <div className="rounded-[14px] bg-white/[0.04] p-4 text-[13px] leading-5 text-white/50">
+                          현재 이 노드가 구독 중인 노드가 없습니다.
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {selectedSubscribedNodes.map(({ edge, node }) => (
+                            <div key={edge.edge_id} className="flex items-center gap-3 rounded-[12px] bg-white/[0.04] px-3 py-2">
+                              <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold ${node?.node_type === 'user' ? 'bg-apple-blue text-white' : 'bg-white/10 text-white/70'}`}>
+                                {node?.node_type === 'user' ? 'U' : 'A'}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-[13px] font-medium text-white/76">{node?.display_name}</span>
+                                <span className="block text-[11px] text-white/38">{node?.node_type} · {edge.status}</span>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </InspectorSection>
+                  )}
                   <InspectorSection title="Workspace Members">
                     {workspaceMembers.length === 0 ? (
                       <div className="rounded-[14px] bg-white/[0.04] p-4 text-[13px] leading-5 text-white/50">
