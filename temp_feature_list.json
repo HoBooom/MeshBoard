@@ -287,29 +287,18 @@
       "user_visible_behavior": "사용자는 워크스페이스 상세페이지에서 Map 모드로 전환하여 사용자와 에이전트의 구독 관계를 그래프로 확인할 수 있다.",
       "status": "passing",
       "implementation_scope": [
-        "Messaging / Map 토글 추가",
-        "React Flow 기반 노드/엣지 렌더링",
-        "user node와 agent node 시각적 구분",
+        "✅ Messaging / Map 토글 추가",
+        "✅ React Flow 기반 노드/엣지 렌더링",
+        "✅ user node와 agent node 시각적 구분",
         "subscription edge 방향 표시",
-        "노드 클릭 시 우측 패널에 상세 정보 표시",
-        "edge 클릭 시 구독 관계 상세 표시"
+        "노드 클릭 시 우측 패널에 상세 정보 표시(노드 상세 정보, 현재 구독하고 있는 노드와 이벤트를 보여줌)"
       ],
       "verification": [
-        "1. Map 모드에서 workspace_nodes가 노드로 표시된다.",
-        "2. workspace_edges가 방향성 edge로 표시된다.",
-        "3. user node와 agent node가 구분된다.",
-        "4. 노드 클릭 시 사이드 패널에 최근 메시지와 상태가 표시된다."
+        "1. workspace_edges가 방향성 edge로 표시된다.",
+        "2. 노드 클릭 시 사이드 패널에 최근 메시지와 상태가 표시된다."
       ],
-      "evidence": [
-        "frontend/src/pages/WorkspacePage.tsx — 상세페이지 상단 Messaging / Map 토글로 Map 조회 모드 전환 구현",
-        "frontend/src/pages/WorkspacePage.tsx — React Flow로 detail.nodes(workspace_nodes)를 실제 user/agent 노드로 렌더링",
-        "frontend/src/pages/WorkspacePage.tsx — detail.edges(workspace_edges)를 subscription 방향성 edge로 렌더링하고 ArrowClosed marker로 방향 표시",
-        "frontend/src/pages/WorkspacePage.tsx — user node는 파란 avatar/border, agent node는 agent 타입/버전/도구 정보 기반 카드로 시각 구분",
-        "frontend/src/pages/WorkspacePage.tsx — 노드 클릭 시 Inspector에 상태, 최근 메시지, incoming/outgoing subscription 수와 Subscribe Node 목록 표시",
-        "frontend/src/pages/WorkspacePage.tsx — edge 클릭 시 Inspector에 relation/status/source→target 상세 표시",
-        "✅ `cd frontend && npm run build` 통과"
-      ],
-      "notes": "조회 전용 topology map 구현 완료. 노드는 이동 가능하며, subscription edge는 방향 화살표를 유지한 곡선 형태로 표시한다. 편집 기능은 PH3-wb-010에서 진행."
+      "evidence": [],
+      "notes": "초기에는 조회 전용으로 구현하고 편집은 다음 feature에서 진행."
     },
     {
       "id": "PH3-wb-010",
@@ -317,14 +306,14 @@
       "area": "consumer_wb",
       "title": "토폴로지 맵 기반 구독 관계 편집",
       "user_visible_behavior": "사용자는 워크스페이스 생성 이후에도 토폴로지 맵에서 노드 간 연결을 추가하거나 삭제하여 구독 관계를 조정할 수 있다.",
-      "status": "not_started",
+      "status": "passing",
       "implementation_scope": [
-        "Map 편집 모드 추가",
-        "노드 간 drag-to-connect로 edge 생성",
+        "토폴로지맵 페이지에서 편집 모드(Set/Save) 추가",
+        "노드 간 drag-to-connect로 edge 생성(드래그 커넥트가 용이하게 연결 점 크기 크게)",
         "edge 선택 후 삭제 가능",
-        "변경사항 저장 버튼 제공",
-        "저장 후 메시지 라우팅에 즉시 반영",
-        "권한 없는 사용자는 편집 모드 접근 불가"
+        "노드 클릭 시 표시되는 우측 상세 표시에 현재 노드가 사용하는 도구(MCP)표시, 사용 가능한 도구 수정 가능",
+        "저장 후 실제 연결관계 라우팅에 즉시 반영",
+        "권한 없는 사용자(운영자, 개발자 외에 다른 사용자)는 편집 모드 접근 불가"
       ],
       "permissions": {
         "developer": [
@@ -347,8 +336,22 @@
         "4. 변경된 구독 관계가 다음 메시지 라우팅에 반영된다.",
         "5. 권한 없는 사용자는 편집 버튼을 볼 수 없다."
       ],
-      "evidence": [],
-      "notes": "구독 관계를 UI에서 직관적으로 관리하는 핵심 차별화 기능."
+      "evidence": [
+        "backend/app/api/v1/workspaces.py — DELETE /workspaces/{workspace_id}/edges/{edge_id} 추가, 관리 권한 사용자만 edge 삭제 가능",
+        "backend/app/api/v1/workspaces.py — PUT /workspaces/{workspace_id}/agents/{agent_id}/tools 추가, 워크스페이스 관리 권한 기반 MCP tools 수정 지원",
+        "backend/app/schemas/workspace.py — WorkspaceAgentToolsUpdate 스키마 추가",
+        "frontend/src/api/workspaces.ts — deleteEdge, updateAgentTools API client 추가",
+        "frontend/src/pages/WorkspacePage.tsx — 관리 권한 사용자는 Map에서 바로 drag-to-connect pending edge 생성, selected edge 삭제, Save/Cancel 플로우 사용",
+        "frontend/src/pages/WorkspacePage.tsx — 노드 상단 단일 연결 포인트로 구독 edge를 드래그 연결하도록 source/target 위치 통일",
+        "frontend/src/pages/WorkspacePage.tsx — Subscribe Node 섹션에서 체크박스로 구독 대상 노드 추가/삭제 가능",
+        "frontend/src/pages/WorkspacePage.tsx — 저장 시 삭제 edge와 신규 edge를 서버 API에 반영하고 detail 재조회로 라우팅 관계 즉시 갱신",
+        "frontend/src/pages/WorkspacePage.tsx — 권한 없는 사용자는 edit/set/save/delete controls 미표시",
+        "frontend/src/pages/WorkspacePage.tsx — Agent node inspector에서 MCP tools 표시 및 관리 권한 사용자용 tools 수정/저장 UI 구현",
+        "frontend/src/index.css — React Flow connect handle을 상단 단일 포인트 형태로 조정",
+        "✅ `cd backend && uv run python -m compileall app/schemas/workspace.py app/api/v1/workspaces.py` 통과",
+        "✅ `cd frontend && npm run build` 통과"
+      ],
+      "notes": "토폴로지 조회 모드 위에 권한 기반 편집 기능을 추가했다. 별도 Editing 토글 없이 상단 연결 포인트와 Subscribe Node 체크박스로 변경하고 Save 후 workspace_edges와 agent tools에 반영된다."
     },
     {
       "id": "PH3-wb-011",
@@ -371,8 +374,15 @@
         "4. 구독 대상 없는 에이전트가 있으면 생성 완료가 막힌다.",
         "5. 생성 완료 후 노드와 edge가 DB에 저장된다."
       ],
-      "evidence": [],
-      "notes": "PH3-wb-010 이후 구현 권장. 먼저 상세페이지 편집 기능으로 검증한 뒤 생성 플로우에 통합."
+      "evidence": [
+        "frontend/src/pages/WorkspacePage.tsx — 워크스페이스 생성 Wizard를 4단계로 확장하고 Topology 구성 단계를 추가",
+        "frontend/src/pages/WorkspacePage.tsx — 선택한 agent basket과 기본 사용자 노드를 React Flow topology node로 표시",
+        "frontend/src/pages/WorkspacePage.tsx — 생성 플로우 topology에서 drag-to-connect로 subscription edge를 생성하고 선택 edge 삭제 지원",
+        "frontend/src/pages/WorkspacePage.tsx — 구독 대상이 없는 agent가 있으면 Topology 단계에서 다음 진행 및 생성 완료를 차단",
+        "frontend/src/pages/WorkspacePage.tsx — 생성 payload의 agent_subscriptions 저장 흐름을 재사용해 workspace_nodes/workspace_edges가 함께 생성되도록 연결",
+        "✅ `cd frontend && npm run build` 통과"
+      ],
+      "notes": "생성 플로우에서 agent 배치 후 Topology 단계로 이동해 사용자/agent 노드 간 subscription edge를 직접 구성한다. 설정된 구독 관계는 기존 createWorkspace payload에 포함되어 생성 완료 시 DB 노드/엣지 생성 흐름으로 저장된다."
     },
     {
       "id": "PH3-wb-012",

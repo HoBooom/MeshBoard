@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Background,
+  Connection,
   Controls,
   Edge,
   EdgeMouseHandler,
@@ -10,12 +11,13 @@ import {
   Node,
   NodeChange,
   NodeMouseHandler,
+  Position,
   ReactFlow,
   useEdgesState,
   useNodesState,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { agentsApi, AgentCreatePayload } from '../api/agents';
+import { agentsApi, AgentCreatePayload, ToolDescriptor } from '../api/agents';
 import { AgentCard, getAgents } from '../api/marketplace';
 import {
   Goal,
@@ -110,6 +112,7 @@ export default function WorkspacePage() {
   const [joinableWorkspaces, setJoinableWorkspaces] = useState<WorkspaceJoinable[]>([]);
   const [accessRequests, setAccessRequests] = useState<WorkspaceAccessRequest[]>([]);
   const [agents, setAgents] = useState<AgentCard[]>([]);
+  const [toolCatalog, setToolCatalog] = useState<ToolDescriptor[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [joiningId, setJoiningId] = useState<string | null>(null);
@@ -127,6 +130,10 @@ export default function WorkspacePage() {
   const [basket, setBasket] = useState<Record<string, { agent: AgentCard; quantity: number }>>({});
   const [subscriptionTargets, setSubscriptionTargets] = useState<Record<string, string[]>>({});
   const [subscriptionFilter, setSubscriptionFilter] = useState<'all' | 'user' | 'agent'>('all');
+  const [selectedCreateEdgeId, setSelectedCreateEdgeId] = useState<string | null>(null);
+  const [createNodePositions, setCreateNodePositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [createMapNodes, setCreateMapNodes, applyCreateMapNodeChanges] = useNodesState<Node>([]);
+  const [createMapEdges, setCreateMapEdges, onCreateMapEdgesChange] = useEdgesState<Edge>([]);
   const [draftAgentName, setDraftAgentName] = useState('');
   const [draftAgentPurpose, setDraftAgentPurpose] = useState('');
   const [messageText, setMessageText] = useState('');
@@ -154,6 +161,11 @@ export default function WorkspacePage() {
   const [mapNodes, setMapNodes, applyMapNodeChanges] = useNodesState<Node>([]);
   const [mapEdges, setMapEdges, onMapEdgesChange] = useEdgesState<Edge>([]);
   const [mapNodePositions, setMapNodePositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [topologySaving, setTopologySaving] = useState(false);
+  const [pendingTopologyEdges, setPendingTopologyEdges] = useState<Array<{ edge_id: string; source_node_id: string; target_node_id: string; edge_type: 'subscription'; status: 'active'; created_at: string; updated_at: string }>>([]);
+  const [removedTopologyEdgeIds, setRemovedTopologyEdgeIds] = useState<string[]>([]);
+  const [agentToolDrafts, setAgentToolDrafts] = useState<Record<string, string[]>>({});
+  const [toolSavingAgentId, setToolSavingAgentId] = useState<string | null>(null);
   const messageFeedEndRef = useRef<HTMLDivElement | null>(null);
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -166,7 +178,7 @@ export default function WorkspacePage() {
   const canGrantAccess =
     roles.has('trust_ops') || roles.has('release_manager') || roles.has('evaluator');
 
-  const basketItems = Object.values(basket);
+  const basketItems = useMemo(() => Object.values(basket), [basket]);
   const selectedGoal = detail?.goals.find((goal) => goal.goal_id === selectedGoalId) || null;
   const topLevelGoals = detail?.goals.filter((goal) => !goal.parent_goal_id) || [];
   const workspaceMembers = detail?.nodes.filter((node) => node.node_type === 'user') || [];
@@ -181,11 +193,26 @@ export default function WorkspacePage() {
   );
   const selectedMapNode = mapNodes.find((node) => node.id === selectedMapNodeId);
   const selectedMapEdge = mapEdges.find((edge) => edge.id === selectedMapEdgeId);
+  const topologyEdges = useMemo(
+    () => [
+      ...(detail?.edges || []).filter((edge) => !removedTopologyEdgeIds.includes(edge.edge_id)),
+      ...pendingTopologyEdges,
+    ],
+    [detail?.edges, pendingTopologyEdges, removedTopologyEdgeIds]
+  );
+  const selectedSubscribableNodes = useMemo(
+    () =>
+      selectedMapNodeId
+        ? detail?.nodes.filter((node) => node.node_id !== selectedMapNodeId) || []
+        : [],
+    [detail?.nodes, selectedMapNodeId]
+  );
   const mentionCandidates = useMemo(() => {
     if (!detail || !mentionRange) return [];
     const query = mentionRange.query.toLowerCase();
     return detail.nodes
       .filter((node) => {
+        if (node.node_type === 'user' && node.ref_id === user?.user_id) return false;
         const name = node.display_name.toLowerCase();
         return !query || name.includes(query) || node.node_type.includes(query);
       })
@@ -194,7 +221,7 @@ export default function WorkspacePage() {
         return a.display_name.localeCompare(b.display_name);
       })
       .slice(0, 8);
-  }, [detail, mentionRange]);
+  }, [detail, mentionRange, user?.user_id]);
   const typingAgents = useMemo(
     () =>
       detail?.placements
@@ -206,6 +233,21 @@ export default function WorkspacePage() {
   const onMapNodesChange = (changes: NodeChange<Node>[]) => {
     applyMapNodeChanges(changes);
     setMapNodePositions((positions) => {
+      let changed = false;
+      const nextPositions = { ...positions };
+      changes.forEach((change) => {
+        if (change.type === 'position' && change.position) {
+          nextPositions[change.id] = change.position;
+          changed = true;
+        }
+      });
+      return changed ? nextPositions : positions;
+    });
+  };
+
+  const onCreateMapNodesChange = (changes: NodeChange<Node>[]) => {
+    applyCreateMapNodeChanges(changes);
+    setCreateNodePositions((positions) => {
       let changed = false;
       const nextPositions = { ...positions };
       changes.forEach((change) => {
@@ -244,6 +286,15 @@ export default function WorkspacePage() {
     setAgents(marketplaceAgents);
   };
 
+  const loadToolCatalog = async () => {
+    try {
+      setToolCatalog(await agentsApi.listTools());
+    } catch (err) {
+      console.error(err);
+      setToolCatalog([]);
+    }
+  };
+
   const openJoinWorkspace = async () => {
     setJoinOpen(true);
     setJoinLoading(true);
@@ -261,6 +312,7 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     void loadList();
+    void loadToolCatalog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canGrantAccess]);
 
@@ -281,6 +333,97 @@ export default function WorkspacePage() {
     setActiveMentionIndex((index) => Math.min(index, Math.max(mentionCandidates.length - 1, 0)));
   }, [mentionCandidates.length]);
 
+  useEffect(() => {
+    if (view !== 'create') return;
+    const userNode = user?.user_id
+      ? [{
+          id: `user:${user.user_id}`,
+          nodeType: 'user' as const,
+          refId: user.user_id,
+          name: user.name || '나',
+          status: 'active' as const,
+        }]
+      : [];
+    const agentNodes = basketItems.map((item) => ({
+      id: `agent:${item.agent.agent_id}`,
+      nodeType: 'agent' as const,
+      refId: item.agent.agent_id,
+      name: item.agent.name,
+      status: 'idle' as const,
+      version: item.agent.version,
+      quantity: item.quantity,
+    }));
+    const graphItems = [...userNode, ...agentNodes];
+    const columns = Math.max(3, Math.ceil(Math.sqrt(Math.max(graphItems.length, 1))));
+    const nodes: Node[] = graphItems.map((item, index) => {
+      const defaultPosition = {
+        x: (index % columns) * 260,
+        y: Math.floor(index / columns) * 165,
+      };
+      return {
+        id: item.id,
+        position: createNodePositions[item.id] || defaultPosition,
+        sourcePosition: Position.Top,
+        targetPosition: Position.Top,
+        connectable: item.nodeType === 'agent',
+        data: {
+          nodeType: item.nodeType,
+          refId: item.refId,
+          displayName: item.name,
+          status: item.status,
+          label: (
+            <div className={`min-w-[220px] rounded-[14px] border bg-white px-4 py-3 shadow-sm ${item.nodeType === 'user' ? 'border-[#0071e3]/25' : 'border-black/10'}`}>
+              <div className="mb-2 flex items-center gap-2">
+                <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${item.nodeType === 'user' ? 'bg-[#0071e3] text-white' : 'bg-black/[0.06] text-black/60'}`}>
+                  {item.nodeType === 'user' ? 'U' : 'A'}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] font-semibold text-[#1d1d1f]">{item.name}</span>
+                  <span className="block text-[11px] uppercase tracking-[0.08em] text-black/38">{item.nodeType}</span>
+                </span>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[11px] text-black/55">
+                <span className="rounded-[9px] bg-black/[0.04] px-2 py-1">
+                  {item.nodeType === 'agent' ? `x${item.quantity}` : 'owner'}
+                </span>
+                <span className="rounded-[9px] bg-black/[0.04] px-2 py-1">
+                  {item.nodeType === 'agent' ? `v${item.version}` : item.status}
+                </span>
+              </div>
+            </div>
+          ),
+        },
+        style: {
+          border: 'none',
+          background: 'transparent',
+          padding: 0,
+          width: 220,
+        },
+      };
+    });
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const edges: Edge[] = Object.entries(subscriptionTargets).flatMap(([sourceAgentId, targets]) =>
+      targets.flatMap((targetKey) => {
+        const source = `agent:${sourceAgentId}`;
+        const target = targetKey;
+        if (!nodeIds.has(source) || !nodeIds.has(target)) return [];
+        return [{
+          id: `create-edge:${sourceAgentId}:${targetKey}`,
+          source,
+          target,
+          animated: true,
+          label: 'subscription',
+          markerEnd: { type: MarkerType.ArrowClosed, color: '#34c759' },
+          data: { relation_type: 'subscription' },
+          style: { stroke: '#34c759', strokeWidth: 2.2 },
+          labelStyle: { fill: '#3a3a3c', fontSize: 11, fontWeight: 600 },
+        } satisfies Edge];
+      })
+    );
+    setCreateMapNodes(nodes);
+    setCreateMapEdges(edges);
+  }, [basketItems, createNodePositions, setCreateMapEdges, setCreateMapNodes, subscriptionTargets, user?.name, user?.user_id, view]);
+
   const openDetail = async (workspaceId: string) => {
     setLoading(true);
     setError(null);
@@ -290,6 +433,10 @@ export default function WorkspacePage() {
       setOptimisticMessages([]);
       setTypingAgentIds([]);
       setMapNodePositions({});
+      setPendingTopologyEdges([]);
+      setRemovedTopologyEdgeIds([]);
+      setSelectedMapEdgeId(null);
+      setSelectedMapNodeId(null);
       setView('detail');
     } catch (err) {
       console.error(err);
@@ -340,6 +487,48 @@ export default function WorkspacePage() {
     });
   };
 
+  const createTopologyEdge = (sourceNodeId: string, targetNodeId: string) => {
+    if (!sourceNodeId.startsWith('agent:') || sourceNodeId === targetNodeId) {
+      setError('구독 관계는 agent 노드에서 다른 노드로만 만들 수 있습니다.');
+      return;
+    }
+    const sourceAgentId = sourceNodeId.replace('agent:', '');
+    setSubscriptionTargets((prev) => {
+      const current = prev[sourceAgentId] || [];
+      if (current.includes(targetNodeId)) return prev;
+      return { ...prev, [sourceAgentId]: [...current, targetNodeId] };
+    });
+    setError(null);
+  };
+
+  const onCreateTopologyConnect = (connection: Connection) => {
+    if (!connection.source || !connection.target) return;
+    createTopologyEdge(connection.source, connection.target);
+  };
+
+  const onCreateTopologyEdgeClick: EdgeMouseHandler = (_, edge) => {
+    setSelectedCreateEdgeId(edge.id);
+  };
+
+  const deleteSelectedCreateEdge = () => {
+    if (!selectedCreateEdgeId) return;
+    const edge = createMapEdges.find((item) => item.id === selectedCreateEdgeId);
+    if (!edge || !edge.source.startsWith('agent:')) return;
+    const sourceAgentId = edge.source.replace('agent:', '');
+    setSubscriptionTargets((prev) => ({
+      ...prev,
+      [sourceAgentId]: (prev[sourceAgentId] || []).filter((targetKey) => targetKey !== edge.target),
+    }));
+    setSelectedCreateEdgeId(null);
+  };
+
+  const ensureAgentBasketForTopology = () => {
+    if (basketItems.length > 0) return true;
+    setError('토폴로지 구성을 위해 에이전트를 하나 이상 배치하세요.');
+    setWizardStep(2);
+    return false;
+  };
+
   const createDraftAgent = async () => {
     if (!draftAgentName.trim()) return;
     const payload: AgentCreatePayload = {
@@ -376,7 +565,7 @@ export default function WorkspacePage() {
     );
     if (agentsMissingSubscriptions.length === 0) return true;
     setError(`구독 대상을 선택하지 않은 에이전트가 있습니다: ${agentsMissingSubscriptions.map((item) => item.agent.name).join(', ')}`);
-    setWizardStep(2);
+    setWizardStep(3);
     return false;
   };
 
@@ -636,7 +825,7 @@ export default function WorkspacePage() {
 
     const agentById = new Map(detail.placements.map((placement) => [placement.agent.agent_id, placement]));
     const edgeDegreeByNodeId = new Map<string, { incoming: number; outgoing: number }>();
-    detail.edges.forEach((edge) => {
+    topologyEdges.forEach((edge) => {
       const sourceDegree = edgeDegreeByNodeId.get(edge.source_node_id) || { incoming: 0, outgoing: 0 };
       sourceDegree.outgoing += 1;
       edgeDegreeByNodeId.set(edge.source_node_id, sourceDegree);
@@ -684,6 +873,9 @@ export default function WorkspacePage() {
       return {
         id: item.id,
         position: mapNodePositions[item.id] || defaultPosition,
+        sourcePosition: Position.Top,
+        targetPosition: Position.Top,
+        connectable: Boolean(detail.user_can_manage),
         data: {
           agentId: item.nodeType === 'agent' ? item.refId : undefined,
           refId: item.refId,
@@ -699,7 +891,7 @@ export default function WorkspacePage() {
           incoming: item.incoming,
           outgoing: item.outgoing,
           label: (
-            <div className={`min-w-[220px] rounded-[14px] border bg-white px-4 py-3 shadow-sm ${highlighted ? 'border-apple-blue shadow-[0_0_0_4px_rgba(0,113,227,0.14)]' : item.nodeType === 'user' ? 'border-[#0071e3]/20' : 'border-black/10'}`}>
+            <div className={`relative min-w-[220px] rounded-[14px] border bg-white px-4 py-3 shadow-sm ${highlighted ? 'border-apple-blue shadow-[0_0_0_4px_rgba(0,113,227,0.14)]' : item.nodeType === 'user' ? 'border-[#0071e3]/20' : 'border-black/10'}`}>
               <div className="mb-2 flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
                   <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${item.nodeType === 'user' ? 'bg-[#0071e3] text-white' : 'bg-black/[0.06] text-black/60'}`}>
@@ -733,10 +925,11 @@ export default function WorkspacePage() {
 
     const nodeIds = new Set(nodes.map((node) => node.id));
     const nodeById = new Map(detail.nodes.map((node) => [node.node_id, node]));
-    const subscriptionEdges: Edge[] = detail.edges
+    const subscriptionEdges: Edge[] = topologyEdges
       .filter((edge) => nodeIds.has(edge.source_node_id) && nodeIds.has(edge.target_node_id))
       .map((edge) => {
         const active = edge.status === 'active';
+        const pending = edge.edge_id.startsWith('local-edge-');
         const sourceNode = nodeById.get(edge.source_node_id);
         const targetNode = nodeById.get(edge.target_node_id);
         return {
@@ -749,15 +942,16 @@ export default function WorkspacePage() {
           data: {
             relation_type: edge.edge_type,
             status: edge.status,
+            pending,
             sourceName: sourceNode?.display_name || edge.source_node_id,
             targetName: targetNode?.display_name || edge.target_node_id,
             created_at: edge.created_at,
             updated_at: edge.updated_at,
           },
           style: {
-            stroke: active ? '#0071e3' : '#8e8e93',
+            stroke: pending ? '#34c759' : active ? '#0071e3' : '#8e8e93',
             strokeWidth: active ? 2.2 : 1.6,
-            strokeDasharray: active ? undefined : '5 5',
+            strokeDasharray: pending || !active ? '5 5' : undefined,
           },
           labelStyle: { fill: '#3a3a3c', fontSize: 11, fontWeight: 600 },
         };
@@ -765,7 +959,7 @@ export default function WorkspacePage() {
 
     setMapNodes(nodes);
     setMapEdges(subscriptionEdges);
-  }, [activeMessages, detail, mapFilter, mapNodePositions, selectedAgentId, selectedMapNodeId, setMapEdges, setMapNodes]);
+  }, [activeMessages, detail, mapFilter, mapNodePositions, selectedAgentId, selectedMapNodeId, setMapEdges, setMapNodes, topologyEdges]);
 
   const onTopologyNodeClick: NodeMouseHandler = (_, node) => {
     setSelectedMapNodeId(node.id);
@@ -782,6 +976,147 @@ export default function WorkspacePage() {
     setInspectorOpen(true);
   };
 
+  const setTopologySubscriptionDraft = (sourceNodeId: string, targetNodeId: string, enabled: boolean) => {
+    if (!detail || !detail.user_can_manage) return;
+    if (sourceNodeId === targetNodeId) {
+      setError('같은 노드끼리는 구독 관계를 만들 수 없습니다.');
+      return;
+    }
+    const sourceNode = detail.nodes.find((node) => node.node_id === sourceNodeId);
+    const targetNode = detail.nodes.find((node) => node.node_id === targetNodeId);
+    if (!sourceNode || !targetNode) return;
+    if (sourceNode.node_type !== 'agent') {
+      setError('구독 관계의 source node 는 agent 여야 합니다.');
+      return;
+    }
+    const existing = topologyEdges.find(
+      (edge) => edge.source_node_id === sourceNodeId && edge.target_node_id === targetNodeId
+    );
+
+    if (enabled) {
+      if (existing) {
+        setRemovedTopologyEdgeIds((ids) => ids.filter((edgeId) => edgeId !== existing.edge_id));
+        return;
+      }
+      const now = new Date().toISOString();
+      setPendingTopologyEdges((edges) => [
+        ...edges,
+        {
+          edge_id: `local-edge-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          source_node_id: sourceNodeId,
+          target_node_id: targetNodeId,
+          edge_type: 'subscription',
+          status: 'active',
+          created_at: now,
+          updated_at: now,
+        },
+      ]);
+      setError(null);
+      return;
+    }
+
+    if (!existing) return;
+    if (existing.edge_id.startsWith('local-edge-')) {
+      setPendingTopologyEdges((edges) => edges.filter((edge) => edge.edge_id !== existing.edge_id));
+    } else {
+      setRemovedTopologyEdgeIds((ids) => (
+        ids.includes(existing.edge_id) ? ids : [...ids, existing.edge_id]
+      ));
+    }
+    setError(null);
+  };
+
+  const onTopologyConnect = (connection: Connection) => {
+    if (!connection.source || !connection.target) return;
+    setTopologySubscriptionDraft(connection.source, connection.target, true);
+  };
+
+  const deleteSelectedTopologyEdge = () => {
+    if (!selectedMapEdgeId) return;
+    if (selectedMapEdgeId.startsWith('local-edge-')) {
+      setPendingTopologyEdges((edges) => edges.filter((edge) => edge.edge_id !== selectedMapEdgeId));
+    } else {
+      setRemovedTopologyEdgeIds((ids) => (
+        ids.includes(selectedMapEdgeId) ? ids : [...ids, selectedMapEdgeId]
+      ));
+    }
+    setSelectedMapEdgeId(null);
+  };
+
+  const saveTopologyChanges = async () => {
+    if (!detail || (!pendingTopologyEdges.length && !removedTopologyEdgeIds.length)) return;
+    setTopologySaving(true);
+    setError(null);
+    try {
+      await Promise.all(removedTopologyEdgeIds.map((edgeId) => workspacesApi.deleteEdge(detail.workspace_id, edgeId)));
+      for (const edge of pendingTopologyEdges) {
+        await workspacesApi.createEdge(detail.workspace_id, {
+          source_node_id: edge.source_node_id,
+          target_node_id: edge.target_node_id,
+          edge_type: 'subscription',
+        });
+      }
+      const nextDetail = await workspacesApi.get(detail.workspace_id);
+      setDetail(nextDetail);
+      setPendingTopologyEdges([]);
+      setRemovedTopologyEdgeIds([]);
+      setSelectedMapEdgeId(null);
+    } catch (err) {
+      console.error(err);
+      setError('토폴로지 변경사항 저장 중 오류가 발생했습니다.');
+    } finally {
+      setTopologySaving(false);
+    }
+  };
+
+  const cancelTopologyChanges = () => {
+    setPendingTopologyEdges([]);
+    setRemovedTopologyEdgeIds([]);
+    setSelectedMapEdgeId(null);
+  };
+
+  const toggleAgentToolDraft = (agentId: string, toolId: string) => {
+    const currentTools =
+      agentToolDrafts[agentId] ||
+      detail?.placements.find((placement) => placement.agent.agent_id === agentId)?.agent.tools ||
+      [];
+    const nextTools = currentTools.includes(toolId)
+      ? currentTools.filter((id) => id !== toolId)
+      : [...currentTools, toolId];
+    setAgentToolDrafts((drafts) => ({ ...drafts, [agentId]: nextTools }));
+  };
+
+  const saveAgentTools = async (agentId: string) => {
+    if (!detail) return;
+    const tools =
+      agentToolDrafts[agentId] ||
+      detail.placements.find((placement) => placement.agent.agent_id === agentId)?.agent.tools ||
+      [];
+    setToolSavingAgentId(agentId);
+    setError(null);
+    try {
+      const updatedAgent = await workspacesApi.updateAgentTools(detail.workspace_id, agentId, tools);
+      setDetail({
+        ...detail,
+        placements: detail.placements.map((placement) =>
+          placement.agent.agent_id === agentId
+            ? { ...placement, agent: { ...placement.agent, tools: updatedAgent.tools } }
+            : placement
+        ),
+      });
+      setAgentToolDrafts((drafts) => {
+        const nextDrafts = { ...drafts };
+        delete nextDrafts[agentId];
+        return nextDrafts;
+      });
+    } catch (err) {
+      console.error(err);
+      setError('에이전트 도구 저장 중 오류가 발생했습니다.');
+    } finally {
+      setToolSavingAgentId(null);
+    }
+  };
+
   if (view === 'create') {
     return (
       <div className="animate-fade-in font-apple">
@@ -794,7 +1129,7 @@ export default function WorkspacePage() {
         {error && <Alert message={error} />}
         <div className="bg-apple-surface1 rounded-[18px] border border-white/5 p-6">
           <div className="flex gap-2 mb-6">
-            {[1, 2, 3].map((step) => (
+            {[1, 2, 3, 4].map((step) => (
               <div
                 key={step}
                 className={`flex-1 h-2 rounded-full ${wizardStep >= step ? 'bg-apple-blue' : 'bg-white/10'}`}
@@ -933,19 +1268,102 @@ export default function WorkspacePage() {
                 <button className="btn-secondary" onClick={() => setWizardStep(1)}>이전</button>
                 <button className="btn-primary" onClick={() => {
                   setError(null);
-                  if (validateAgentSubscriptions()) setWizardStep(3);
-                }}>다음: 환경 구성</button>
+                  if (ensureAgentBasketForTopology()) setWizardStep(3);
+                }}>다음: 토폴로지 구성</button>
               </div>
             </section>
           )}
           {wizardStep === 3 && (
+            <section className="space-y-4">
+              <div className="rounded-[14px] border border-white/10 bg-apple-surface2 p-4">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-[17px] font-semibold text-white">Topology 구성</h3>
+                    <p className="mt-1 text-[13px] text-white/45">Agent 상단 포인트에서 사용자 또는 다른 agent로 드래그해 subscription edge를 만듭니다.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="rounded-[10px] bg-white/10 px-3 py-2 text-[12px] font-semibold text-[#ff9f0a] disabled:opacity-40"
+                      disabled={!selectedCreateEdgeId}
+                      onClick={deleteSelectedCreateEdge}
+                    >
+                      Delete edge
+                    </button>
+                    <p className="text-[12px] text-white/42">{createMapNodes.length} nodes · {createMapEdges.length} edges</p>
+                  </div>
+                </div>
+                <div className="h-[460px] overflow-hidden rounded-[18px] border border-white/10 bg-white">
+                  <ReactFlow
+                    nodes={createMapNodes}
+                    edges={createMapEdges}
+                    onNodesChange={onCreateMapNodesChange}
+                    onEdgesChange={onCreateMapEdgesChange}
+                    onConnect={onCreateTopologyConnect}
+                    onEdgeClick={onCreateTopologyEdgeClick}
+                    fitView
+                    minZoom={0.25}
+                    maxZoom={1.8}
+                    nodesDraggable
+                    nodesConnectable
+                    edgesFocusable
+                  >
+                    <Background color="#d1d1d6" gap={18} />
+                    <Controls />
+                    <MiniMap
+                      nodeColor={(node) => node.data.nodeType === 'user' ? '#0071e3' : '#8e8e93'}
+                      pannable
+                      zoomable
+                    />
+                  </ReactFlow>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {basketItems.map((item) => {
+                  const selectedTargets = subscriptionTargets[item.agent.agent_id] || [];
+                  return (
+                    <div key={`topology-summary-${item.agent.agent_id}`} className="rounded-[12px] bg-white/[0.04] p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <p className="truncate text-[13px] font-semibold text-white">{item.agent.name}</p>
+                        <span className={`text-[11px] ${selectedTargets.length > 0 ? 'text-[#34c759]' : 'text-[#ff9f0a]'}`}>{selectedTargets.length} subscriptions</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedTargets.length === 0 ? (
+                          <span className="text-[11px] text-white/35">구독 대상 없음</span>
+                        ) : (
+                          selectedTargets.map((targetKey) => {
+                            const [targetType, targetRefId] = targetKey.split(':');
+                            const label = targetType === 'user'
+                              ? user?.name || '나'
+                              : basketItems.find((target) => target.agent.agent_id === targetRefId)?.agent.name || targetRefId;
+                            return (
+                              <span key={targetKey} className="rounded-[8px] bg-apple-blue/15 px-2 py-1 text-[11px] text-white/72">
+                                {targetType} · {label}
+                              </span>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex justify-between">
+                <button className="btn-secondary" onClick={() => setWizardStep(2)}>이전</button>
+                <button className="btn-primary" onClick={() => {
+                  setError(null);
+                  if (validateAgentSubscriptions()) setWizardStep(4);
+                }}>다음: 환경 구성</button>
+              </div>
+            </section>
+          )}
+          {wizardStep === 4 && (
             <section className="space-y-4">
               <div className="rounded-[14px] border border-dashed border-white/20 p-8 text-center bg-apple-surface2">
                 <p className="text-[17px] font-semibold text-white mb-1">환경 구성</p>
                 <p className="text-[14px] text-white/50">Coming Soon · 에이전트가 동작할 환경 변수, 데이터 연결, 권한 정책은 후속 단계에서 구현합니다.</p>
               </div>
               <div className="flex justify-between">
-                <button className="btn-secondary" onClick={() => setWizardStep(2)}>이전</button>
+                <button className="btn-secondary" onClick={() => setWizardStep(3)}>이전</button>
                 <button className="btn-primary" onClick={createWorkspace} disabled={saving}>
                   {saving ? '생성 중...' : '워크스페이스 생성'}
                 </button>
@@ -966,7 +1384,7 @@ export default function WorkspacePage() {
     const agentLabel = selectedAgent ? selectedAgent.agent.name : 'environment-messages';
     const workspaceNodeById = new Map(detail.nodes.map((node) => [node.node_id, node]));
     const selectedSubscribedNodes = selectedMapNodeId
-      ? detail.edges
+      ? topologyEdges
           .filter((edge) => edge.source_node_id === selectedMapNodeId)
           .map((edge) => ({
             edge,
@@ -1387,7 +1805,40 @@ export default function WorkspacePage() {
                       </button>
                     ))}
                   </div>
-                  <p className="text-[12px] text-black/45">{mapNodes.length} nodes · {mapEdges.length} edges</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {detail.user_can_manage && (
+                      <>
+                        <button
+                          className="rounded-[10px] bg-white px-3 py-1.5 text-[12px] font-semibold text-[#d70015] shadow-sm disabled:opacity-40"
+                          disabled={!selectedMapEdgeId}
+                          onClick={deleteSelectedTopologyEdge}
+                        >
+                          Delete edge
+                        </button>
+                        <button
+                          className="rounded-[10px] bg-apple-blue px-3 py-1.5 text-[12px] font-semibold text-white shadow-sm disabled:opacity-40"
+                          disabled={topologySaving || (!pendingTopologyEdges.length && !removedTopologyEdgeIds.length)}
+                          onClick={() => void saveTopologyChanges()}
+                        >
+                          {topologySaving ? 'Saving...' : 'Save'}
+                        </button>
+                        {(pendingTopologyEdges.length > 0 || removedTopologyEdgeIds.length > 0) && (
+                          <button
+                            className="rounded-[10px] bg-white px-3 py-1.5 text-[12px] font-medium text-black/50 shadow-sm"
+                            onClick={cancelTopologyChanges}
+                          >
+                            Cancel
+                          </button>
+                        )}
+                      </>
+                    )}
+                    <p className="text-[12px] text-black/45">
+                      {mapNodes.length} nodes · {mapEdges.length} edges
+                      {pendingTopologyEdges.length > 0 || removedTopologyEdgeIds.length > 0
+                        ? ` · +${pendingTopologyEdges.length} / -${removedTopologyEdgeIds.length}`
+                        : ''}
+                    </p>
+                  </div>
                 </div>
                 <div className="h-[calc(100%-44px)] overflow-hidden rounded-[18px] border border-black/10 bg-white">
                   <ReactFlow
@@ -1395,13 +1846,14 @@ export default function WorkspacePage() {
                     edges={mapEdges}
                     onNodesChange={onMapNodesChange}
                     onEdgesChange={onMapEdgesChange}
+                    onConnect={onTopologyConnect}
                     onNodeClick={onTopologyNodeClick}
                     onEdgeClick={onTopologyEdgeClick}
                     fitView
                     minZoom={0.25}
                     maxZoom={1.8}
                     nodesDraggable
-                    nodesConnectable={false}
+                    nodesConnectable={detail.user_can_manage}
                     edgesFocusable
                   >
                     <Background color="#d1d1d6" gap={18} />
@@ -1465,8 +1917,16 @@ export default function WorkspacePage() {
                       <>
                         <InspectorKV label="Selected edge" value={selectedMapEdge.id} />
                         <InspectorKV label="Relation" value={String(selectedMapEdge.data?.relation_type || selectedMapEdge.label || '-')} />
-                        <InspectorKV label="Status" value={String(selectedMapEdge.data?.status || '-')} />
+                        <InspectorKV label="Status" value={`${String(selectedMapEdge.data?.status || '-')}${selectedMapEdge.data?.pending ? ' · pending' : ''}`} />
                         <InspectorKV label="Source → Target" value={`${String(selectedMapEdge.data?.sourceName || selectedMapEdge.source)} → ${String(selectedMapEdge.data?.targetName || selectedMapEdge.target)}`} />
+                        {detail.user_can_manage && (
+                          <button
+                            className="mt-2 w-full rounded-[10px] bg-[#ff453a]/15 px-3 py-2 text-[12px] font-semibold text-[#ff9f0a] hover:bg-[#ff453a]/20"
+                            onClick={deleteSelectedTopologyEdge}
+                          >
+                            Delete selected edge
+                          </button>
+                        )}
                       </>
                     )}
                   </InspectorSection>
@@ -1505,6 +1965,45 @@ export default function WorkspacePage() {
                         <InspectorKV label="Version" value={selectedAgent?.agent.version || '-'} />
                         <InspectorKV label="Visibility" value={selectedAgent?.agent.visibility || '-'} />
                         <InspectorKV label="Tools" value={selectedAgent?.agent.tools.join(', ') || '-'} />
+                        {detail.user_can_manage && selectedAgent && (
+                          <div className="mt-3 rounded-[14px] bg-white/[0.04] p-3">
+                            <div className="mb-2 flex items-center justify-between gap-2">
+                              <span className="text-[12px] font-semibold text-white/70">MCP Tools</span>
+                              <button
+                                className="rounded-[9px] bg-apple-blue px-2.5 py-1 text-[11px] font-semibold text-white disabled:opacity-40"
+                                disabled={toolSavingAgentId === selectedAgent.agent.agent_id}
+                                onClick={() => void saveAgentTools(selectedAgent.agent.agent_id)}
+                              >
+                                {toolSavingAgentId === selectedAgent.agent.agent_id ? 'Saving' : 'Save tools'}
+                              </button>
+                            </div>
+                            <div className="max-h-[190px] space-y-1.5 overflow-y-auto">
+                              {toolCatalog.length === 0 ? (
+                                <div className="rounded-[10px] bg-black/20 px-3 py-2 text-[12px] text-white/42">사용 가능한 도구가 없습니다.</div>
+                              ) : (
+                                toolCatalog.map((tool) => {
+                                  const agentId = selectedAgent.agent.agent_id;
+                                  const draftTools = agentToolDrafts[agentId] || selectedAgent.agent.tools;
+                                  const checked = draftTools.includes(tool.id);
+                                  return (
+                                    <label key={tool.id} className={`flex cursor-pointer items-start gap-2 rounded-[10px] px-2.5 py-2 ${checked ? 'bg-apple-blue/15' : 'bg-black/16 hover:bg-white/[0.06]'}`}>
+                                      <input
+                                        type="checkbox"
+                                        className="mt-0.5"
+                                        checked={checked}
+                                        onChange={() => toggleAgentToolDraft(agentId, tool.id)}
+                                      />
+                                      <span className="min-w-0 flex-1">
+                                        <span className="block truncate text-[12px] font-medium text-white/76">{tool.name}</span>
+                                        <span className="block truncate text-[11px] text-white/36">{tool.id}</span>
+                                      </span>
+                                    </label>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </>
                     )}
                     {selectedMapNode && (
@@ -1518,7 +2017,31 @@ export default function WorkspacePage() {
                   </InspectorSection>
                   {selectedMapNode && (
                     <InspectorSection title="Subscribe Node">
-                      {selectedSubscribedNodes.length === 0 ? (
+                      {detail.user_can_manage && selectedMapNode.data.nodeType === 'agent' ? (
+                        <div className="space-y-2">
+                          {selectedSubscribableNodes.map((node) => {
+                            const checked = topologyEdges.some(
+                              (edge) => edge.source_node_id === selectedMapNode.id && edge.target_node_id === node.node_id
+                            );
+                            return (
+                              <label key={node.node_id} className={`flex cursor-pointer items-center gap-3 rounded-[12px] px-3 py-2 ${checked ? 'bg-apple-blue/15' : 'bg-white/[0.04] hover:bg-white/[0.07]'}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={(event) => setTopologySubscriptionDraft(selectedMapNode.id, node.node_id, event.target.checked)}
+                                />
+                                <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold ${node.node_type === 'user' ? 'bg-apple-blue text-white' : 'bg-white/10 text-white/70'}`}>
+                                  {node.node_type === 'user' ? 'U' : 'A'}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span className="block truncate text-[13px] font-medium text-white/76">{node.display_name}</span>
+                                  <span className="block text-[11px] text-white/38">{node.node_type} · {node.status}</span>
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : selectedSubscribedNodes.length === 0 ? (
                         <div className="rounded-[14px] bg-white/[0.04] p-4 text-[13px] leading-5 text-white/50">
                           현재 이 노드가 구독 중인 노드가 없습니다.
                         </div>

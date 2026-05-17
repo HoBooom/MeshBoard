@@ -50,37 +50,46 @@ def _mention_key(display_name: str) -> str:
     return re.sub(r"\s+", "_", display_name.strip()).lower()
 
 
-async def _direct_mentioned_agent_ids(
+async def _direct_mentioned_targets(
     db: AsyncSession,
     workspace_id,
     body_ref: str,
     workspace_agent_id_set: set,
-) -> tuple[bool, list]:
+) -> tuple[bool, list, list]:
     tokens = [match.group(1).lower() for match in MENTION_RE.finditer(_message_text_from_body_ref(body_ref))]
     if not tokens:
-        return False, []
+        return False, [], []
 
-    agent_nodes = (
+    mentioned_nodes = (
         await db.execute(
             select(WorkspaceNode).where(
                 WorkspaceNode.workspace_id == workspace_id,
-                WorkspaceNode.node_type == "agent",
+                WorkspaceNode.node_type.in_(["agent", "user"]),
                 WorkspaceNode.status != "error",
             )
         )
     ).scalars().all()
     agent_id_by_token = {
         _mention_key(node.display_name): node.ref_id
-        for node in agent_nodes
-        if node.ref_id in workspace_agent_id_set
+        for node in mentioned_nodes
+        if node.node_type == "agent" and node.ref_id in workspace_agent_id_set
+    }
+    user_id_by_token = {
+        _mention_key(node.display_name): node.ref_id
+        for node in mentioned_nodes
+        if node.node_type == "user"
     }
 
     matched_agent_ids = []
+    matched_user_ids = []
     for token in tokens:
         agent_id = agent_id_by_token.get(token)
         if agent_id is not None and agent_id not in matched_agent_ids:
             matched_agent_ids.append(agent_id)
-    return True, matched_agent_ids
+        user_id = user_id_by_token.get(token)
+        if user_id is not None and user_id not in matched_user_ids:
+            matched_user_ids.append(user_id)
+    return True, matched_agent_ids, matched_user_ids
 
 
 async def publish_message_header(
@@ -232,7 +241,7 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
         ).scalars().all()
     )
     workspace_agent_id_set = set(workspace_agent_ids)
-    has_direct_mention, matched_agent_ids = await _direct_mentioned_agent_ids(
+    has_direct_mention, matched_agent_ids, matched_user_ids = await _direct_mentioned_targets(
         db,
         header.workspace_id,
         header.body_ref,
@@ -326,7 +335,7 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
             finally:
                 agent_node.updated_at = datetime.now(timezone.utc)
                 await db.flush()
-    elif header.sender_type in {"user", "agent"}:
+    elif header.sender_type in {"user", "agent"} and not matched_user_ids:
         recipient_name = (header.sender_name or "사용자").strip() or "사용자"
         await _publish_system_workspace_message(
             db,

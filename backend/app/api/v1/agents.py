@@ -120,7 +120,7 @@ async def _load_owned_agent(
 
 @router.get("/tools", response_model=List[ToolDescriptor])
 async def list_tools(current_user: User = Depends(get_current_user)):
-    """크리에이터가 UI 에서 선택할 수 있는 내장 도구(MCP) 카탈로그를 반환합니다."""
+    """크리에이터가 UI 에서 선택할 수 있는 내장/외부 도구(MCP) 카탈로그를 반환합니다."""
     return [ToolDescriptor(**tool) for tool in list_tool_descriptors()]
 
 

@@ -35,6 +35,7 @@ from app.schemas.workspace import (
     WorkspaceAccessRequestCreate,
     WorkspaceAccessRequestRead,
     WorkspaceAgentRead,
+    WorkspaceAgentToolsUpdate,
     WorkspaceCreate,
     WorkspaceDetailRead,
     WorkspaceEdgeCreate,
@@ -46,6 +47,7 @@ from app.schemas.workspace import (
     WorkspaceRead,
     WorkspaceUpdateAgents,
 )
+from app.services.tool_catalog import TOOL_REGISTRY
 
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
@@ -863,6 +865,66 @@ async def create_workspace_edge(
     await db.flush()
     await db.refresh(edge)
     return WorkspaceEdgeRead.model_validate(edge)
+
+
+@router.delete("/{workspace_id}/edges/{edge_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_workspace_edge(
+    workspace_id: UUID,
+    edge_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _ensure_manage(db, workspace_id, current_user)
+    edge = (
+        await db.execute(
+            select(WorkspaceEdge).where(
+                WorkspaceEdge.workspace_id == workspace_id,
+                WorkspaceEdge.edge_id == edge_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if edge is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="워크스페이스 edge 를 찾을 수 없습니다.")
+    await db.delete(edge)
+    await db.flush()
+    return None
+
+
+@router.put("/{workspace_id}/agents/{agent_id}/tools", response_model=AgentRead)
+async def update_workspace_agent_tools(
+    workspace_id: UUID,
+    agent_id: UUID,
+    payload: WorkspaceAgentToolsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _ensure_manage(db, workspace_id, current_user)
+    placement = (
+        await db.execute(
+            select(WorkspaceAgent).where(
+                WorkspaceAgent.workspace_id == workspace_id,
+                WorkspaceAgent.agent_id == agent_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if placement is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="워크스페이스에 배치된 에이전트가 아닙니다.")
+    unknown = [tool_id for tool_id in payload.tools if tool_id not in TOOL_REGISTRY]
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"등록되지 않은 도구(MCP) 가 포함되어 있습니다: {unknown}",
+        )
+    agent = (
+        await db.execute(select(Agent).where(Agent.agent_id == agent_id))
+    ).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="에이전트를 찾을 수 없습니다.")
+    agent.tools = list(dict.fromkeys(payload.tools))
+    agent.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+    await db.refresh(agent)
+    return AgentRead.model_validate(agent)
 
 
 @router.get("/{workspace_id}/nodes/{node_id}/subscribers", response_model=List[WorkspaceNodeRead])

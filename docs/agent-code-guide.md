@@ -291,15 +291,42 @@ TOOL_CATALOG: List[Dict] = [
 - **`TOOL_REGISTRY`**: 런타임에서 `tool.invoke(args)` 로 실제 실행하는 객체 맵
 - **`TOOL_CATALOG`**: UI 에 표시하고 API 로 내려보내는 메타데이터 리스트
 
-#### 현재 등록된 도구 5종
+#### 현재 등록된 기본 도구
 
 | ID | 이름 | 설명 |
 |----|------|------|
 | `get_current_time` | 현재 시각 조회 | UTC ISO 8601 반환 |
 | `echo` | 에코(Echo) | 입력 그대로 반환 (테스트용) |
 | `calculate` | 수식 계산 | `ast` 기반 안전한 수식 평가 |
+| `advanced_calculate` | 고급 수학 계산 | `sqrt`, `sin`, `log`, `pi` 등 수학 함수/상수 지원 |
+| `web_search` | 웹 검색 | 외부 웹 검색 결과를 제목, URL, 요약으로 반환 |
+| `fetch_url` | URL 본문 조회 | HTTP/HTTPS URL 본문을 가져와 텍스트로 반환 |
 | `lookup_employee_leave` | 직원 연차 조회 (데모) | E001~E003 고정 Mock 데이터 |
 | `search_knowledge_base` | 사내 지식베이스 검색 (데모) | 키워드 매칭 FAQ 반환 |
+
+#### 환경변수 기반 외부 HTTP MCP 도구
+
+`EXTERNAL_MCP_TOOLS` 에 JSON 배열을 넣으면 서버 시작 시 `TOOL_REGISTRY` 와 UI 카탈로그에 외부 도구가 동적으로 추가됩니다.
+
+```json
+[
+  {
+    "id": "company_search",
+    "name": "회사 검색 API",
+    "description": "사내 검색 API를 호출합니다.",
+    "url": "https://example.com/mcp/search",
+    "method": "POST",
+    "headers": {"Authorization": "Bearer token"},
+    "inputSchema": {
+      "type": "object",
+      "properties": {"query": {"type": "string"}},
+      "required": ["query"]
+    }
+  }
+]
+```
+
+`method` 는 `GET` 또는 `POST` 를 지원합니다. `POST` 는 에이전트가 넘긴 arguments 를 JSON body 로 보내고, `GET` 은 query parameter 로 보냅니다.
 
 ---
 
@@ -566,7 +593,7 @@ class AgentRead(BaseModel):
 
 ## 8. 새 도구(MCP) 추가하는 방법
 
-`backend/app/services/tool_catalog.py` 파일에서 세 곳을 수정합니다.
+정적 내장 도구는 `backend/app/services/tool_catalog.py` 파일에서 세 곳을 수정합니다.
 
 **Step 1.** 함수 구현 (langchain `@lc_tool` 데코레이터 필수)
 
@@ -606,6 +633,8 @@ TOOL_CATALOG: List[Dict[str, str]] = [
 
 > 세 곳 모두 추가하면 서버 재시작 없이(uvicorn `--reload` 모드 기준) UI 의  
 > "도구(MCP) 선택" 섹션에 즉시 노출됩니다.
+
+외부 HTTP MCP 도구는 코드 수정 없이 `.env` 의 `EXTERNAL_MCP_TOOLS` 로 추가할 수 있습니다. 이 경우 서버 재시작 후 UI 에 노출됩니다.
 
 ---
 

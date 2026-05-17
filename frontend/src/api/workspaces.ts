@@ -218,6 +218,15 @@ export const workspacesApi = {
     return res.data;
   },
 
+  deleteEdge: async (workspaceId: string, edgeId: string): Promise<void> => {
+    await client.delete(`/workspaces/${workspaceId}/edges/${edgeId}`);
+  },
+
+  updateAgentTools: async (workspaceId: string, agentId: string, tools: string[]): Promise<Agent> => {
+    const res = await client.put<Agent>(`/workspaces/${workspaceId}/agents/${agentId}/tools`, { tools });
+    return res.data;
+  },
+
   listNodeSubscribers: async (workspaceId: string, nodeId: string): Promise<WorkspaceNode[]> => {
     const res = await client.get<WorkspaceNode[]>(`/workspaces/${workspaceId}/nodes/${nodeId}/subscribers`);
     return res.data;

@@ -78,3 +78,15 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-white/40;
 }
+
+.react-flow__handle {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #fff;
+  background: #0071e3;
+  box-shadow: 0 3px 10px rgba(0, 113, 227, 0.28);
+}
+
+.react-flow__handle-top {
+  top: -8px;
+}

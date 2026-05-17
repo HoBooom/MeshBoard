@@ -40,6 +40,12 @@ class WorkspaceUpdateAgents(BaseModel):
     agent_placements: List[WorkspaceAgentPlacement] = Field(default_factory=list)
 
 
+class WorkspaceAgentToolsUpdate(BaseModel):
+    """워크스페이스 관리자가 배치된 에이전트의 사용 도구를 수정하는 요청."""
+
+    tools: List[str] = Field(default_factory=list)
+
+
 class WorkspaceJoinRequest(BaseModel):
     access_code: str = Field(..., min_length=1, max_length=32)
 

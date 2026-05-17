@@ -42,4 +42,9 @@ class Settings(BaseSettings):
     RUNYOUR_BASE_URL: str = "https://api.runyour.ai/v1"
     DEFAULT_LLM_MODEL: str = "openai/gpt-5"
 
+    # ── External MCP/Tool Configuration ───────────────────────
+    # JSON array. Example:
+    # [{"id":"company_search","name":"Company Search","description":"Search company API","url":"https://...","method":"POST","inputSchema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}}]
+    EXTERNAL_MCP_TOOLS: str = "[]"
+
 settings = Settings()
