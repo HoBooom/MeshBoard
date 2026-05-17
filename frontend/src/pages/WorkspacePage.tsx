@@ -803,6 +803,38 @@ export default function WorkspacePage() {
     setShowGoalForm(false);
   };
 
+  const startSubGoalForm = (parentGoal: Goal) => {
+    setGoalParentId(parentGoal.goal_id);
+    setGoalName('');
+    setGoalDescription('');
+    setGoalPriority(parentGoal.priority);
+    setGoalSuccessCriteria('');
+    setGoalAssignedAgents(parentGoal.assigned_agent_ids);
+    setShowGoalForm(true);
+  };
+
+  const deleteGoal = async (goal: Goal) => {
+    if (!detail) return;
+    const childGoalIds = new Set<string>();
+    const collectChildren = (parentGoalId: string) => {
+      detail.goals
+        .filter((item) => item.parent_goal_id === parentGoalId)
+        .forEach((child) => {
+          childGoalIds.add(child.goal_id);
+          collectChildren(child.goal_id);
+        });
+    };
+    collectChildren(goal.goal_id);
+    const deleteLabel = goal.parent_goal_id ? 'Sub Goal' : 'Goal';
+    if (!window.confirm(`${deleteLabel} "${goal.name}"을 삭제하시겠습니까? 하위 Goal도 함께 삭제됩니다.`)) return;
+    await workspacesApi.deleteGoal(detail.workspace_id, goal.goal_id);
+    const nextDetail = await workspacesApi.get(detail.workspace_id);
+    setDetail(nextDetail);
+    if (selectedGoalId === goal.goal_id || childGoalIds.has(selectedGoalId || '')) {
+      setSelectedGoalId(null);
+    }
+  };
+
   const updateGoalState = async (goal: Goal, nextState: Goal['state']) => {
     if (!detail) return;
     const updated = await workspacesApi.updateGoal(detail.workspace_id, goal.goal_id, { state: nextState });
@@ -1496,6 +1528,9 @@ export default function WorkspacePage() {
                     goals={detail.goals}
                     selectedGoalId={selectedGoalId}
                     onSelect={selectGoal}
+                    canManage={detail.user_can_manage}
+                    onCreateChild={startSubGoalForm}
+                    onDelete={deleteGoal}
                   />
                 ))}
                 {detail.user_can_manage && (
@@ -1629,7 +1664,7 @@ export default function WorkspacePage() {
                 >
                   Expand Logs
                 </button>
-                {detail.user_can_manage && (
+                {detail.user_can_delete && (
                   <button
                     className="rounded-[10px] border border-[#ff453a]/20 bg-[#ff453a]/10 px-3 py-2 text-[12px] font-medium text-[#d70015] shadow-sm hover:bg-[#ff453a]/15"
                     onClick={deleteWorkspace}
@@ -2267,12 +2302,18 @@ function GoalTreeItem({
   goals,
   selectedGoalId,
   onSelect,
+  canManage,
+  onCreateChild,
+  onDelete,
   depth = 0,
 }: {
   goal: Goal;
   goals: Goal[];
   selectedGoalId: string | null;
   onSelect: (goal: Goal) => void;
+  canManage: boolean;
+  onCreateChild: (goal: Goal) => void;
+  onDelete: (goal: Goal) => void;
   depth?: number;
 }) {
   const children = goals.filter((item) => item.parent_goal_id === goal.goal_id);
@@ -2287,17 +2328,34 @@ function GoalTreeItem({
 
   return (
     <div>
-      <button
-        className={`mb-1 flex w-full items-center gap-2 rounded-[12px] py-2 pr-3 text-left transition ${selectedGoalId === goal.goal_id ? 'bg-apple-blue/20 text-white' : 'text-white/60 hover:bg-white/[0.07]'}`}
+      <div
+        className={`group mb-1 flex w-full items-center gap-2 rounded-[12px] py-2 pr-2 text-left transition ${selectedGoalId === goal.goal_id ? 'bg-apple-blue/20 text-white' : 'text-white/60 hover:bg-white/[0.07]'}`}
         style={{ paddingLeft: `${12 + depth * 14}px` }}
-        onClick={() => onSelect(goal)}
       >
         <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${stateTone}`} />
-        <span className="min-w-0 flex-1">
+        <button className="min-w-0 flex-1 text-left" onClick={() => onSelect(goal)}>
           <span className="block truncate text-[13px] font-medium">{goal.name}</span>
           <span className="block text-[11px] text-white/38">{goal.state} · {goal.progress}% · msg {goal.recent_message_count}</span>
-        </span>
-      </button>
+        </button>
+        {canManage && (
+          <span className="flex shrink-0 items-center gap-1 opacity-70 transition group-hover:opacity-100 group-focus-within:opacity-100">
+            <button
+              className="rounded-[7px] bg-white/10 px-1.5 py-1 text-[11px] font-semibold text-white/60 hover:bg-apple-blue/25 hover:text-white"
+              title="Sub Goal 생성"
+              onClick={() => onCreateChild(goal)}
+            >
+              +
+            </button>
+            <button
+              className="rounded-[7px] bg-[#ff453a]/12 px-1.5 py-1 text-[11px] font-semibold text-[#ff9f0a] hover:bg-[#ff453a]/20"
+              title="Goal 삭제"
+              onClick={() => onDelete(goal)}
+            >
+              x
+            </button>
+          </span>
+        )}
+      </div>
       {children.map((child) => (
         <GoalTreeItem
           key={child.goal_id}
@@ -2305,6 +2363,9 @@ function GoalTreeItem({
           goals={goals}
           selectedGoalId={selectedGoalId}
           onSelect={onSelect}
+          canManage={canManage}
+          onCreateChild={onCreateChild}
+          onDelete={onDelete}
           depth={depth + 1}
         />
       ))}

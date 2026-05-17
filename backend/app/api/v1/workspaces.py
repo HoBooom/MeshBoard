@@ -54,6 +54,7 @@ router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
 CREATOR_ROLES = {"agent_owner", "agent_engineer", "trust_ops", "release_manager"}
 GRANT_ROLES = {"trust_ops", "release_manager", "evaluator"}
+WORKSPACE_DELETE_ROLES = {"agent_owner", "agent_engineer", "release_manager"}
 WORKSPACE_JOIN_CODE = "1234"
 
 
@@ -134,6 +135,14 @@ async def _ensure_manage(db: AsyncSession, workspace_id: UUID, user: User) -> Wo
     return workspace
 
 
+async def _ensure_delete_workspace(db: AsyncSession, workspace_id: UUID, user: User) -> Workspace:
+    workspace = await _load_workspace(db, workspace_id)
+    meta = await _access_meta(db, workspace, user)
+    if not meta["user_can_manage"] or not _has_any_role(user, WORKSPACE_DELETE_ROLES):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="워크스페이스 삭제 권한이 없습니다.")
+    return workspace
+
+
 def _progress_for_state(state: str) -> int:
     return {
         "pending": 0,
@@ -154,6 +163,25 @@ def _ensure_valid_goal_payload(*, priority: Optional[str] = None, state: Optiona
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"state 는 {sorted(GOAL_STATES)} 중 하나여야 합니다.",
+        )
+
+
+async def _ensure_goal_agents_placed(db: AsyncSession, workspace_id: UUID, agent_ids: List[UUID]) -> None:
+    if not agent_ids:
+        return
+    existing_agents = (
+        await db.execute(
+            select(WorkspaceAgent.agent_id).where(
+                WorkspaceAgent.workspace_id == workspace_id,
+                WorkspaceAgent.agent_id.in_(agent_ids),
+            )
+        )
+    ).scalars().all()
+    missing = set(agent_ids) - set(existing_agents)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="워크스페이스에 배치되지 않은 에이전트가 포함되어 있습니다.",
         )
 
 
@@ -573,6 +601,7 @@ async def _workspace_to_read(
     return data.model_copy(
         update={
             **meta,
+            "user_can_delete": meta["user_can_manage"] and _has_any_role(user, WORKSPACE_DELETE_ROLES),
             "placements": placements,
             "agent_count": agent_count,
             "user_count": int(member_count) + (0 if owner_is_member else 1),
@@ -990,7 +1019,7 @@ async def delete_workspace(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    workspace = await _ensure_manage(db, workspace_id, current_user)
+    workspace = await _ensure_delete_workspace(db, workspace_id, current_user)
     workspace.state = "DELETED"
     workspace.updated_at = datetime.now(timezone.utc)
     await db.flush()
@@ -1028,18 +1057,7 @@ async def create_goal(
         if parent is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="상위 Goal을 찾을 수 없습니다.")
 
-    if payload.assigned_agent_ids:
-        existing_agents = (
-            await db.execute(
-                select(WorkspaceAgent.agent_id).where(
-                    WorkspaceAgent.workspace_id == workspace_id,
-                    WorkspaceAgent.agent_id.in_(payload.assigned_agent_ids),
-                )
-            )
-        ).scalars().all()
-        missing = set(payload.assigned_agent_ids) - set(existing_agents)
-        if missing:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="워크스페이스에 배치되지 않은 에이전트가 포함되어 있습니다.")
+    await _ensure_goal_agents_placed(db, workspace_id, payload.assigned_agent_ids)
 
     goal = Goal(
         workspace_id=workspace_id,
@@ -1098,6 +1116,7 @@ async def update_goal(
     if payload.state is not None:
         goal.state = payload.state
     if payload.assigned_agent_ids is not None:
+        await _ensure_goal_agents_placed(db, workspace_id, payload.assigned_agent_ids)
         goal.assigned_agent_ids = payload.assigned_agent_ids
     if payload.success_criteria is not None:
         goal.success_criteria = payload.success_criteria
@@ -1112,3 +1131,63 @@ async def update_goal(
     return GoalRead.model_validate(goal).model_copy(
         update={"recent_message_count": int(message_count), "progress": _progress_for_state(goal.state)}
     )
+
+
+@router.delete("/{workspace_id}/goals/{goal_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_goal(
+    workspace_id: UUID,
+    goal_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    await _ensure_manage(db, workspace_id, current_user)
+    goals = (
+        await db.execute(select(Goal).where(Goal.workspace_id == workspace_id))
+    ).scalars().all()
+    goal_by_id = {goal.goal_id: goal for goal in goals}
+    if goal_id not in goal_by_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Goal을 찾을 수 없습니다.")
+
+    child_ids_by_parent: dict[UUID, list[UUID]] = {}
+    for goal in goals:
+        if goal.parent_goal_id is not None:
+            child_ids_by_parent.setdefault(goal.parent_goal_id, []).append(goal.goal_id)
+
+    goal_ids_to_delete: set[UUID] = set()
+    stack = [goal_id]
+    while stack:
+        current_goal_id = stack.pop()
+        if current_goal_id in goal_ids_to_delete:
+            continue
+        goal_ids_to_delete.add(current_goal_id)
+        stack.extend(child_ids_by_parent.get(current_goal_id, []))
+
+    ended_at = datetime.now(timezone.utc)
+    delete_goal_ids = list(goal_ids_to_delete)
+    conversations = (
+        await db.execute(
+            select(Conversation).where(
+                Conversation.workspace_id == workspace_id,
+                Conversation.goal_id.in_(delete_goal_ids),
+            )
+        )
+    ).scalars().all()
+    for conversation in conversations:
+        conversation.goal_id = None
+        conversation.state = "ARCHIVED"
+        conversation.ended_at = ended_at
+
+    messages = (
+        await db.execute(
+            select(Message).where(
+                Message.workspace_id == workspace_id,
+                Message.goal_id.in_(delete_goal_ids),
+            )
+        )
+    ).scalars().all()
+    for message in messages:
+        message.goal_id = None
+
+    await db.execute(delete(Goal).where(Goal.goal_id == goal_id, Goal.workspace_id == workspace_id))
+    await db.flush()
+    return None

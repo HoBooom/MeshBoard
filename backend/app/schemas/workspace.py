@@ -123,6 +123,7 @@ class WorkspaceRead(BaseModel):
     pending_request_id: Optional[UUID] = None
     user_can_access: bool = False
     user_can_manage: bool = False
+    user_can_delete: bool = False
 
     model_config = {"from_attributes": True}
 

@@ -408,8 +408,8 @@
       ],
       "evidence": [
         "backend/app/models/workspace.py: Goal에 parent_goal_id, conversation_id, priority, assigned_agent_ids, success_criteria, pending/running/blocked/completed/failed 상태 추가",
-        "backend/app/api/v1/workspaces.py: Goal 생성/수정/list API, Goal 생성 시 Conversation 자동 생성, 워크스페이스 삭제 API 구현",
-        "frontend/src/pages/WorkspacePage.tsx: 좌측 Goals 트리, Goal 생성 폼, Goal 상태 변경, Goal별 메시지 필터링 UI 구현",
+        "backend/app/api/v1/workspaces.py: Goal 생성/수정/삭제/list API, Goal 생성 시 Conversation 자동 생성, 운영자/개발자 권한 기반 워크스페이스 삭제 API 구현",
+        "frontend/src/pages/WorkspacePage.tsx: 좌측 Goals 트리, Goal/Sub Goal 생성 폼, Goal 상태 변경, Goal/Sub Goal 삭제, Goal별 메시지 필터링 UI 구현",
         "API smoke test: Goal 생성 후 conversation_id=0ac0736b-13f9-4df3-a5d2-ea6358a21804 자동 생성, state running 업데이트 확인",
         "cd backend && uv run alembic upgrade head",
         "cd frontend && npm run build"

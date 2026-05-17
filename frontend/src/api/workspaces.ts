@@ -25,6 +25,7 @@ export interface Workspace {
   pending_request_id?: string | null;
   user_can_access: boolean;
   user_can_manage: boolean;
+  user_can_delete: boolean;
 }
 
 export interface WorkspaceJoinable {
@@ -260,6 +261,10 @@ export const workspacesApi = {
   ): Promise<Goal> => {
     const res = await client.put<Goal>(`/workspaces/${workspaceId}/goals/${goalId}`, payload);
     return res.data;
+  },
+
+  deleteGoal: async (workspaceId: string, goalId: string): Promise<void> => {
+    await client.delete(`/workspaces/${workspaceId}/goals/${goalId}`);
   },
 
   publish: async (
