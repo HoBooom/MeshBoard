@@ -147,6 +147,7 @@ export default function WorkspacePage() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorMode, setInspectorMode] = useState<'agent' | 'message' | 'logs'>('agent');
   const [workspaceMode, setWorkspaceMode] = useState<'messaging' | 'map'>('messaging');
+  const [workspaceSidebarCollapsed, setWorkspaceSidebarCollapsed] = useState(false);
   const [selectedGoalId, setSelectedGoalId] = useState<string | null>(null);
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [goalName, setGoalName] = useState('');
@@ -1430,10 +1431,18 @@ export default function WorkspacePage() {
         .map((node) => [node.ref_id, node.status])
     );
 
+    const detailGridColumns = workspaceSidebarCollapsed
+      ? inspectorOpen
+        ? 'xl:grid-cols-[76px_minmax(0,1fr)_340px]'
+        : 'xl:grid-cols-[76px_minmax(0,1fr)]'
+      : inspectorOpen
+        ? 'xl:grid-cols-[280px_minmax(0,1fr)_340px]'
+        : 'xl:grid-cols-[280px_minmax(0,1fr)]';
+
     return (
-      <div className="animate-fade-in font-apple">
-        <div className="mb-4 flex items-center justify-between">
-          <button className="btn-secondary" onClick={() => setView('list')}>← 워크스페이스 목록</button>
+      <div className="-mt-5 animate-fade-in font-apple">
+        <div className="mb-2 flex items-center justify-between">
+          <button className="btn-secondary !py-2" onClick={() => setView('list')}>← 워크스페이스 목록</button>
           <div className="hidden md:flex items-center gap-2 text-[12px] text-white/45">
             <span>{detail.tags.join(' · ') || 'untagged environment'}</span>
             <span>·</span>
@@ -1441,16 +1450,81 @@ export default function WorkspacePage() {
           </div>
         </div>
 
-        <div className={`grid h-[calc(100vh-190px)] min-h-0 grid-cols-1 ${inspectorOpen ? 'xl:grid-cols-[280px_minmax(0,1fr)_340px]' : 'xl:grid-cols-[280px_minmax(0,1fr)]'} gap-0 overflow-hidden rounded-[22px] border border-white/10 bg-[#101114] shadow-[0_18px_70px_rgba(0,0,0,0.35)]`}>
-          <aside className="flex min-h-0 flex-col border-b border-white/10 bg-[#17181c] xl:border-b-0 xl:border-r">
-            <div className="border-b border-white/10 p-5">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-white/35">Workspace</p>
-              <h1 className="mt-1 truncate text-[19px] font-semibold text-white">{detail.name || '워크스페이스'}</h1>
-              <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-white/45">{detail.description || '다중 에이전트 그래프 환경'}</p>
+        <div className={`grid h-[calc(100vh-158px)] min-h-0 grid-cols-1 ${detailGridColumns} gap-0 overflow-hidden rounded-[22px] border border-white/10 bg-[#101114] shadow-[0_18px_70px_rgba(0,0,0,0.35)] transition-[grid-template-columns] duration-300 ease-out`}>
+          <aside className="flex min-h-0 flex-col border-b border-white/10 bg-[#17181c] transition-[width] duration-300 xl:border-b-0 xl:border-r">
+            <div className={`${workspaceSidebarCollapsed ? 'p-3' : 'p-5'} border-b border-white/10 transition-all duration-300`}>
+              <div className={`flex items-start ${workspaceSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+                {!workspaceSidebarCollapsed && (
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] uppercase tracking-[0.16em] text-white/35">Workspace</p>
+                    <h1 className="mt-1 truncate text-[19px] font-semibold text-white">{detail.name || '워크스페이스'}</h1>
+                    <p className="mt-1 line-clamp-2 text-[12px] leading-5 text-white/45">{detail.description || '다중 에이전트 그래프 환경'}</p>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] text-white/50 transition hover:bg-white/10 hover:text-white"
+                  onClick={() => setWorkspaceSidebarCollapsed((collapsed) => !collapsed)}
+                  aria-label={workspaceSidebarCollapsed ? '워크스페이스 정보 사이드바 펼치기' : '워크스페이스 정보 사이드바 접기'}
+                  aria-expanded={!workspaceSidebarCollapsed}
+                  title={workspaceSidebarCollapsed ? '워크스페이스 정보 펼치기' : '워크스페이스 정보 접기'}
+                >
+                  <svg
+                    className={`h-5 w-5 transition-transform duration-300 ${workspaceSidebarCollapsed ? 'rotate-180' : ''}`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.7} d="M15 19l-7-7 7-7" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-3">
-              <SidebarGroup title="Active Agents">
+            {workspaceSidebarCollapsed ? (
+              <div className="flex-1 overflow-y-auto px-3 py-4">
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    className="flex h-12 w-full items-center justify-center rounded-[12px] bg-white/[0.04] text-[12px] font-semibold text-white/68 hover:bg-white/[0.08] hover:text-white"
+                    onClick={() => setWorkspaceSidebarCollapsed(false)}
+                    title={detail.name || '워크스페이스'}
+                  >
+                    W
+                  </button>
+                  <button
+                    type="button"
+                    className="flex h-12 w-full items-center justify-center rounded-[12px] text-[12px] font-semibold text-white/55 hover:bg-white/[0.08] hover:text-white"
+                    onClick={() => {
+                      setWorkspaceSidebarCollapsed(false);
+                      setInspectorMode('agent');
+                      setInspectorOpen(true);
+                    }}
+                    title={`Active Agents ${detail.placements.length}`}
+                  >
+                    A
+                  </button>
+                  <button
+                    type="button"
+                    className="flex h-12 w-full items-center justify-center rounded-[12px] text-[12px] font-semibold text-white/55 hover:bg-white/[0.08] hover:text-white"
+                    onClick={() => setWorkspaceSidebarCollapsed(false)}
+                    title={`Workspace Members ${workspaceMembers.length}`}
+                  >
+                    U
+                  </button>
+                  <button
+                    type="button"
+                    className="flex h-12 w-full items-center justify-center rounded-[12px] text-[12px] font-semibold text-white/55 hover:bg-white/[0.08] hover:text-white"
+                    onClick={() => setWorkspaceSidebarCollapsed(false)}
+                    title={`Goals ${detail.goals.length}`}
+                  >
+                    G
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto p-3">
+                <SidebarGroup title="Active Agents">
                 {detail.placements.map((placement, index) => {
                   const status = detailAgentStatusById.get(placement.agent.agent_id) || agentStatus(index);
                   const unreadCount = detail.messages.filter(
@@ -1478,9 +1552,9 @@ export default function WorkspacePage() {
                     </button>
                   );
                 })}
-              </SidebarGroup>
+                </SidebarGroup>
 
-              <SidebarGroup title="Workspace Members">
+                <SidebarGroup title="Workspace Members">
                 {workspaceMembers.length === 0 ? (
                   <div className="rounded-[12px] px-3 py-2 text-[12px] text-white/38">참여한 사용자가 없습니다.</div>
                 ) : (
@@ -1511,9 +1585,9 @@ export default function WorkspacePage() {
                     );
                   })
                 )}
-              </SidebarGroup>
+                </SidebarGroup>
 
-              <SidebarGroup title="Goals">
+                <SidebarGroup title="Goals">
                 <button
                   className={`mb-1 flex w-full items-center justify-between rounded-[12px] px-3 py-2.5 text-left transition ${!selectedGoal ? 'bg-apple-blue/20 text-white' : 'text-white/60 hover:bg-white/[0.07]'}`}
                   onClick={() => void selectGoal(null)}
@@ -1580,9 +1654,9 @@ export default function WorkspacePage() {
                     </div>
                   </div>
                 )}
-              </SidebarGroup>
+                </SidebarGroup>
 
-              <SidebarGroup title="System Agents">
+                <SidebarGroup title="System Agents">
                 <button className="flex w-full items-center gap-3 rounded-[12px] px-3 py-2.5 text-left text-white/55 hover:bg-white/[0.07]">
                   <span className="h-2.5 w-2.5 rounded-full bg-white/30" />
                   <span className="text-[13px]">Graph Orchestrator</span>
@@ -1591,18 +1665,19 @@ export default function WorkspacePage() {
                   <span className="h-2.5 w-2.5 rounded-full bg-[#ffd60a]" />
                   <span className="text-[13px]">Memory Indexer</span>
                 </button>
-              </SidebarGroup>
-            </div>
+                </SidebarGroup>
+              </div>
+            )}
 
-            <div className="border-t border-white/10 p-4">
+            <div className={`${workspaceSidebarCollapsed ? 'p-3' : 'p-4'} border-t border-white/10`}>
               <div className="flex items-center gap-3 rounded-[14px] bg-white/[0.04] p-3">
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-apple-blue text-[13px] font-semibold text-white">
                   {(user?.name || 'U').charAt(0)}
                 </div>
-                <div className="min-w-0 flex-1">
+                {!workspaceSidebarCollapsed && <div className="min-w-0 flex-1">
                   <p className="truncate text-[13px] font-medium text-white">{user?.name || '사용자'}</p>
                   <p className="text-[11px] text-white/38">Settings · Profile</p>
-                </div>
+                </div>}
               </div>
             </div>
           </aside>

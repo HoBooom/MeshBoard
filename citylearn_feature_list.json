@@ -1,0 +1,487 @@
+{
+  "project": "MeshBoard",
+  "last_updated": "2026-05-20",
+  "context": "CityLearn 2022 데이터셋 기반 스마트 시티 전력 관리 데모 환경",
+  "rules": {
+    "single_active_feature": true,
+    "passing_requires_evidence": true,
+    "do_not_skip_verification": true
+  },
+  "status_legend": {
+    "not_started": "Work has not begun.",
+    "in_progress": "The feature is the current active task.",
+    "blocked": "Work cannot continue until a documented blocker is resolved.",
+    "passing": "Required verification has passed and evidence is recorded."
+  },
+  "features": [
+    {
+      "id": "CL-wizard-001",
+      "priority": 1,
+      "area": "workspace_wizard",
+      "title": "워크스페이스 생성 Wizard 4단계: 환경 구성 (Environment Setup) - 템플릿 선택",
+      "user_visible_behavior": "사용자는 워크스페이스 생성 마법사의 4단계에서 준비된 환경 템플릿 카드 목록을 보고, '도시 관리' 템플릿을 선택하여 CityLearn(2022 데이터셋) 시뮬레이션 환경을 구성할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "워크스페이스 생성 Wizard에 4단계 'Environment Setup' 추가 (기존 3단계 Topology 이후)",
+        "환경 템플릿 카드 목록 UI 구현: 현재는 '도시 관리' 카드만 존재",
+        "더미 템플릿 카드 추가: '스마트 팩토리', '물류센터', '에너지 그리드' 등 (Coming Soon 처리)",
+        "CityLearn 템플릿 카드에 데이터셋 요약 정보 표시: 17개 빌딩 도시 환경",
+        "템플릿 선택 시 환경 메타데이터(template_id, dataset_year, building_count)를 워크스페이스 생성 payload에 포함"
+      ],
+      "template_cards": [
+        {
+          "id": "citylearn-2022",
+          "name": "도시 관리 (CityLearn - 2022 Data)",
+          "description": "17개 빌딩의 전력 소비, 태양광 발전, 배터리 충방전, EV 충전을 포함하는 스마트 시티 전력 관리 시뮬레이션",
+          "status": "available",
+          "highlighted": true,
+          "metadata": {
+            "buildings": 17,
+            "time_steps": 8760,
+            "interval": "1 hour",
+            "dataset_year": 2022,
+            "features": [
+              "electrical_storage",
+              "pv",
+              "ev_charger",
+              "washing_machine"
+            ]
+          }
+        },
+        {
+          "id": "smart-factory",
+          "name": "스마트 팩토리",
+          "status": "coming_soon"
+        },
+        {
+          "id": "logistics-center",
+          "name": "물류센터",
+          "status": "coming_soon"
+        },
+        {
+          "id": "energy-grid",
+          "name": "에너지 그리드",
+          "status": "coming_soon"
+        }
+      ],
+      "verification": [
+        "1. 워크스페이스 생성 Wizard 4단계에 환경 구성 화면이 표시된다.",
+        "2. CityLearn 템플릿 카드가  표시되고 선택 가능하다.",
+        "3. Coming Soon 카드는 선택 불가하며 비활성 상태로 표시된다.",
+        "4. CityLearn 선택 시 데이터셋 요약 정보(17개 빌딩 도시 환경,전력 관리 시뮬레이션)가 표시된다.",
+        "5. 템플릿 미선택 시 다음 단계 진행이 차단된다."
+      ],
+      "evidence": [],
+      "notes": "기존 Wizard 3단계(Topology) 이후 4단계로 추가. 템플릿 선택은 워크스페이스 metadata에 저장."
+    },
+    {
+      "id": "CL-wizard-002",
+      "priority": 2,
+      "area": "workspace_wizard",
+      "title": "워크스페이스 생성 Wizard 4단계: 에이전트-빌딩 매핑 UI",
+      "user_visible_behavior": "CityLearn 템플릿 선택 후, 17개 빌딩 노드가 도식화되고 2단계에서 장바구니에 담은 에이전트들을 각 빌딩(개별 에이전트) 또는 중앙(관리 에이전트 집합)에 매핑할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "CityLearn 선택 시 17개 빌딩(Building 1~17)을 그리드/허니콤 형태로 도식화",
+        "중앙 관리 에이전트 영역(Central Controller Zone) 별도 표시",
+        "장바구니 에이전트를 빌딩 노드 또는 중앙 영역에 드래그 앤 드롭으로 매핑",
+        "대체 UI로 빌딩별 셀렉트 박스(드롭다운)를 통한 에이전트 할당 지원",
+        "빌딩별 메타데이터 표시: battery_capacity(6.4kWh), pv_nominal_power, charger 유무",
+        "매핑 완료 후 agent_building_mapping 데이터를 워크스페이스 생성 payload에 포함",
+        "미매핑 빌딩 경고 표시 (선택적 허용)"
+      ],
+      "building_nodes": [
+        {
+          "id": "Building_1",
+          "battery_capacity": 6.4,
+          "pv_power": 12.0,
+          "has_charger": true,
+          "has_washing_machine": true
+        },
+        {
+          "id": "Building_2",
+          "battery_capacity": 6.4,
+          "pv_power": 4.0,
+          "has_charger": false,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_3",
+          "battery_capacity": 6.4,
+          "pv_power": 4.0,
+          "has_charger": false,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_4",
+          "battery_capacity": 6.4,
+          "pv_power": 8.0,
+          "has_charger": true,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_5",
+          "battery_capacity": 6.4,
+          "pv_power": 10.0,
+          "has_charger": true,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_6",
+          "battery_capacity": 6.4,
+          "pv_power": 4.0,
+          "has_charger": false,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_7",
+          "battery_capacity": 6.4,
+          "pv_power": 9.0,
+          "has_charger": true,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_8",
+          "battery_capacity": 6.4,
+          "pv_power": 4.0,
+          "has_charger": false,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_9",
+          "battery_capacity": 6.4,
+          "pv_power": 4.0,
+          "has_charger": false,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_10",
+          "battery_capacity": 6.4,
+          "pv_power": 6.0,
+          "has_charger": true,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_11",
+          "battery_capacity": 6.4,
+          "pv_power": 5.0,
+          "has_charger": false,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_12",
+          "battery_capacity": 6.4,
+          "pv_power": 8.0,
+          "has_charger": true,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_13",
+          "battery_capacity": 6.4,
+          "pv_power": 5.0,
+          "has_charger": false,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_14",
+          "battery_capacity": 6.4,
+          "pv_power": 4.0,
+          "has_charger": false,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_15",
+          "battery_capacity": 6.4,
+          "pv_power": 7.0,
+          "has_charger": true,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_16",
+          "battery_capacity": 6.4,
+          "pv_power": 4.0,
+          "has_charger": false,
+          "has_washing_machine": false
+        },
+        {
+          "id": "Building_17",
+          "battery_capacity": 6.4,
+          "pv_power": 4.0,
+          "has_charger": false,
+          "has_washing_machine": false
+        }
+      ],
+      "verification": [
+        "1. CityLearn 템플릿 선택 후 17개 빌딩 노드가 그리드로 표시된다.",
+        "2. 중앙 관리 에이전트 영역이 별도로 표시된다.",
+        "3. 장바구니 에이전트를 빌딩 노드에 드래그 앤 드롭 또는 셀렉트 박스로 매핑할 수 있다.",
+        "4. 빌딩별 메타데이터(배터리, PV, 충전기)가 표시된다.",
+        "5. 매핑 결과가 워크스페이스 생성 payload에 포함된다."
+      ],
+      "evidence": [],
+      "notes": "CityLearn schema.json의 buildings 정의를 기반으로 빌딩별 설비 정보를 표시한다."
+    },
+    {
+      "id": "CL-ui-001",
+      "priority": 3,
+      "area": "consumer_wb",
+      "title": "워크스페이스 상세 탭 네비게이션에 Board 탭 추가",
+      "user_visible_behavior": "워크스페이스 상세페이지에서 기존 'Messaging' , 'Map' 탭에 이어 'Board (전력 관리 현황)' 탭이 추가되어, CityLearn 환경의 실시간 전력 관리 대시보드로 전환할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "워크스페이스 상세 헤더의 탭 네비게이션에 'Board' 탭 추가",
+        "CityLearn 템플릿 워크스페이스에서만 Board 탭 활성화 (다른 환경은 Coming Soon 표시)",
+        "workspaceMode 상태에 'board' 옵션 추가: 'messaging' | 'map' | 'board'",
+        "Board 탭 선택 시 BoardView 컴포넌트 렌더링",
+        "탭 아이콘 및 활성 상태 스타일링"
+      ],
+      "verification": [
+        "1. 워크스페이스 상세페이지 탭에 'Board' 탭이 표시된다.",
+        "2. CityLearn 워크스페이스에서 Board 탭 클릭 시 전력 관리 대시보드가 렌더링된다.",
+        "3. 기존 Messaging, Map 탭과 자연스럽게 전환된다.",
+        "4. 비-CityLearn 워크스페이스에서는 Board 탭이 비활성/Coming Soon 표시된다."
+      ],
+      "evidence": [],
+      "notes": "기존 WorkspacePage.tsx의 workspaceMode 토글을 확장."
+    },
+    {
+      "id": "CL-board-001",
+      "priority": 4,
+      "area": "consumer_wb",
+      "title": "Board 뷰: 실시간 비교 대시보드 (Key Metrics + 실시간 차트)",
+      "user_visible_behavior": "Board 뷰에서 기존 시스템(Baseline: Rule-based/RL)과 Agent-Mesh 시스템의 전력 관리 효율을 실시간으로 비교할 수 있다. 주요 지표 요약 카드와 Recharts 기반 실시간 라인 차트가 시뮬레이션 tick과 동기화되어 업데이트된다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "주요 지표(Key Metrics) 요약 카드 4종 구현",
+        "Recharts AreaChart 기반 실시간 비교 차트 (Baseline vs Agent-Mesh)",
+        "X축: 시뮬레이션 시간(Time Step), Y축: 전력 소비량(kWh)",
+        "두 라인의 명확한 색상 대비 (Baseline: #ff6b6b, Agent-Mesh: #51cf66)",
+        "시뮬레이션 tick마다 차트 데이터 포인트 추가 (rolling window 최근 72시간)",
+        "더미 데이터 생성: Baseline은 실제 CityLearn 패턴 기반, Agent-Mesh는 피크 절감 효과 반영",
+        "차트 애니메이션 효과 (데이터 포인트 추가 시 부드러운 전환)"
+      ],
+      "key_metrics": [
+        {
+          "id": "total_consumption",
+          "label": "총 전력 소비량",
+          "unit": "kWh",
+          "comparison": "baseline_vs_mesh",
+          "improvement_display": "% 절감"
+        },
+        {
+          "id": "total_cost",
+          "label": "전력 비용",
+          "unit": "$",
+          "comparison": "baseline_vs_mesh",
+          "improvement_display": "% 절감"
+        },
+        {
+          "id": "carbon_emission",
+          "label": "탄소 배출량",
+          "unit": "kgCO₂",
+          "comparison": "baseline_vs_mesh",
+          "improvement_display": "% 감소"
+        },
+        {
+          "id": "peak_reduction",
+          "label": "피크 부하 감소",
+          "unit": "kW",
+          "comparison": "baseline_vs_mesh",
+          "improvement_display": "% 감소"
+        }
+      ],
+      "chart_config": {
+        "type": "AreaChart",
+        "library": "recharts",
+        "x_axis": "time_step",
+        "y_axis": "power_consumption_kwh",
+        "series": [
+          {
+            "key": "baseline",
+            "label": "기존 시스템 (Baseline)",
+            "color": "#ff6b6b",
+            "fill_opacity": 0.15
+          },
+          {
+            "key": "agent_mesh",
+            "label": "Agent-Mesh 시스템",
+            "color": "#51cf66",
+            "fill_opacity": 0.15
+          }
+        ],
+        "rolling_window": 72,
+        "animation_duration": 300
+      },
+      "verification": [
+        "1. Board 뷰에 4개 주요 지표 카드가 표시된다.",
+        "2. 각 카드에 현재 값과 기존 대비 개선율(%)이 표시된다.",
+        "3. Recharts 기반 AreaChart에 Baseline과 Agent-Mesh 두 라인이 표시된다.",
+        "4. 시뮬레이션 tick 진행 시 차트 데이터가 실시간으로 업데이트된다.",
+        "5. Agent-Mesh 라인이 피크 시간대에 Baseline보다 낮은 소비량을 보인다.",
+        "6. 차트 데이터 추가 시 부드러운 애니메이션이 동작한다.",
+        "7. rolling window(72시간)를 초과하면 오래된 데이터가 제거된다."
+      ],
+      "evidence": [],
+      "notes": "Recharts를 활용한 실시간 비교 차트. 더미 데이터는 시간대별 전력 소비 패턴(주간 피크, 야간 저감)을 반영하여 생성."
+    },
+    {
+      "id": "CL-board-002",
+      "priority": 5,
+      "area": "consumer_wb",
+      "title": "Board 뷰: 빌딩별 현황 히트맵 및 배터리 상태 리스트",
+      "user_visible_behavior": "Board 뷰 하단에 17개 빌딩 각각의 배터리 충방전(SoC) 상태와 에이전트 개입 여부를 미니 히트맵 또는 리스트 형태로 확인할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "17개 빌딩 미니 히트맵 그리드: 각 빌딩의 현재 전력 소비량을 색상 강도로 표현",
+        "빌딩별 배터리 SoC(State of Charge) 프로그레스 바 표시 (0~100%)",
+        "충전/방전 상태 아이콘 (↑충전 ↓방전 —유지)",
+        "에이전트 개입 여부 배지: 에이전트가 배터리 제어 명령을 내린 빌딩에 표시",
+        "빌딩 클릭 시 상세 팝오버: 최근 24시간 소비/발전/SoC 미니 차트",
+        "PV 발전량 및 EV 충전기 상태 표시 (해당 빌딩만)",
+        "시뮬레이션 tick마다 히트맵 및 SoC 데이터 업데이트"
+      ],
+      "building_status_model": {
+        "building_id": "string",
+        "current_consumption_kwh": "number",
+        "battery_soc": "number (0.0 ~ 1.0)",
+        "battery_action": "charging | discharging | idle",
+        "pv_generation_kwh": "number",
+        "agent_intervention": "boolean",
+        "agent_action_description": "string | null",
+        "ev_charger_status": "connected | disconnected | charging | null",
+        "net_load_kwh": "number"
+      },
+      "heatmap_config": {
+        "layout": "grid (4x5 or 3x6)",
+        "color_scale": "green(low) → yellow(mid) → red(high)",
+        "metric": "net_load_kwh",
+        "cell_size": "80x80px",
+        "update_interval": "per simulation tick"
+      },
+      "verification": [
+        "1. 17개 빌딩이 히트맵 그리드로 표시된다.",
+        "2. 각 빌딩의 전력 소비량에 따라 색상 강도가 변한다.",
+        "3. 배터리 SoC 프로그레스 바와 충방전 상태가 표시된다.",
+        "4. 에이전트 개입 빌딩에 시각적 배지가 표시된다.",
+        "5. 빌딩 클릭 시 상세 팝오버가 표시된다.",
+        "6. 시뮬레이션 진행 시 히트맵과 SoC가 실시간 업데이트된다.",
+        "7. EV 충전기가 있는 빌딩(1,4,5,7,10,12,15)에 충전기 상태가 표시된다."
+      ],
+      "evidence": [],
+      "notes": "더미 SoC는 시간대별 충방전 패턴을 반영. 에이전트 개입은 피크 시간대(14~18시)에 방전 명령을 내리는 시나리오."
+    },
+    {
+      "id": "CL-sim-001",
+      "priority": 6,
+      "area": "simulation_runtime",
+      "title": "글로벌 시뮬레이션 컨트롤 바 (Simulation Control Bar)",
+      "user_visible_behavior": "도시관리 워크스페이스 내부 상단에 고정된 시뮬레이션 컨트롤 바에서 Play/Pause, 배속 조절, 현재 시뮬레이션 시간을 확인하고 제어할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "도시관리 워크스페이스 상세 뷰 상단에 고정 시뮬레이션 컨트롤 바 컴포넌트 구현",
+        "Play/Pause 토글 버튼",
+        "Tick Rate(배속) 조절: 슬라이더 또는 프리셋 버튼 (0.2x, 0.5x, 1x, 2x, 5x, 10x)",
+        "1x 기준: 현실 1초 = 시뮬레이션 1시간(1 time step)",
+        "현재 시뮬레이션 시간 표시: Time Step, 날짜/시각 (2022-01-01 00:00 ~ 2022-12-31 23:00)",
+        "시뮬레이션 진행률 프로그레스 바 (현재 step / 8760)",
+        "setInterval 기반 시뮬레이션 루프 구현 (더미 데이터 tick 진행)",
+        "시뮬레이션 상태: idle, running, paused, completed"
+      ],
+      "simulation_config": {
+        "total_steps": 8760,
+        "seconds_per_step": 3600,
+        "tick_rate_presets": [
+          {
+            "label": "0.2x",
+            "real_seconds_per_step": 5.0
+          },
+          {
+            "label": "0.5x",
+            "real_seconds_per_step": 2.0
+          },
+          {
+            "label": "1x",
+            "real_seconds_per_step": 1.0
+          },
+          {
+            "label": "2x",
+            "real_seconds_per_step": 0.5
+          },
+          {
+            "label": "5x",
+            "real_seconds_per_step": 0.2
+          },
+          {
+            "label": "10x",
+            "real_seconds_per_step": 0.1
+          }
+        ],
+        "default_tick_rate": "1x"
+      },
+      "verification": [
+        "1. 워크스페이스 상세 뷰에 시뮬레이션 컨트롤 바가 고정 표시된다.",
+        "2. Play 버튼 클릭 시 time step이 tick rate에 맞게 자동 증가한다.",
+        "3. Pause 버튼 클릭 시 시뮬레이션이 일시 정지된다.",
+        "4. 배속 슬라이더/버튼으로 tick rate를 변경할 수 있다.",
+        "5. 현재 time step과 날짜/시각이 실시간으로 갱신된다.",
+        "6. 프로그레스 바가 진행률을 표시한다.",
+        "7. 8760 step 완료 시 시뮬레이션 상태가 completed로 변경된다."
+      ],
+      "evidence": [],
+      "notes": "프론트엔드 전용 더미 시뮬레이션. setInterval로 tick을 진행하고 React state로 시간 관리."
+    },
+    {
+      "id": "CL-sim-002",
+      "priority": 7,
+      "area": "simulation_runtime",
+      "title": "돌발 상황 주입 패널 (Intervention Panel)",
+      "user_visible_behavior": "사용자는 시뮬레이션 실행 중 특정 빌딩에 '전력 수요 급증', '태양광 발전량 급감' 등의 돌발 이벤트를 즉각적으로 주입하여 에이전트의 대응을 관찰할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "컨트롤 바 또는 사이드 패널에 Intervention 버튼/아이콘 추가",
+        "이벤트 유형 선택: 전력 수요 급증(+50%), 태양광 발전량 급감(-80%), 배터리 고장, EV 급속 충전 요청",
+        "대상 빌딩 선택: 드롭다운 또는 빌딩 노드 클릭",
+        "이벤트 강도 조절 슬라이더 (예: 수요 증가율 20~200%)",
+        "주입 시 해당 빌딩의 더미 데이터에 즉각 반영",
+        "이벤트 주입 이력 로그 표시",
+        "이벤트 주입 시 토스트 알림 및 해당 빌딩 노드 하이라이트"
+      ],
+      "event_types": [
+        {
+          "id": "demand_surge",
+          "label": "전력 수요 급증",
+          "default_intensity": 1.5,
+          "unit": "multiplier"
+        },
+        {
+          "id": "solar_drop",
+          "label": "태양광 발전량 급감",
+          "default_intensity": 0.2,
+          "unit": "multiplier"
+        },
+        {
+          "id": "battery_fault",
+          "label": "배터리 고장",
+          "default_intensity": 0,
+          "unit": "boolean"
+        },
+        {
+          "id": "ev_rush",
+          "label": "EV 급속 충전 요청",
+          "default_intensity": 3,
+          "unit": "count"
+        }
+      ],
+      "verification": [
+        "1. Intervention 패널에서 이벤트 유형을 선택할 수 있다.",
+        "2. 대상 빌딩을 선택할 수 있다.",
+        "3. 이벤트 강도를 슬라이더로 조절할 수 있다.",
+        "4. 이벤트 주입 후 해당 빌딩의 차트 데이터에 변화가 반영된다.",
+        "5. 이벤트 주입 이력이 로그로 표시된다.",
+        "6. 토스트 알림과 빌딩 노드 하이라이트가 동작한다."
+      ],
+      "evidence": [],
+      "notes": "데모용 인풋 조작. 주입된 이벤트는 더미 데이터 생성 함수에 multiplier로 적용."
+    }
+  ]
+}

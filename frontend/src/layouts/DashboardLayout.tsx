@@ -5,7 +5,7 @@
  * 역할별 네비게이션 메뉴를 동적으로 생성합니다.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 
@@ -82,7 +82,14 @@ const roleLabels: Record<string, string> = {
 export default function DashboardLayout() {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return window.localStorage.getItem('meshboard.sidebarCollapsed') === 'true';
+  });
+
+  useEffect(() => {
+    window.localStorage.setItem('meshboard.sidebarCollapsed', String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
 
   const handleLogout = () => {
     logout();
@@ -101,10 +108,11 @@ export default function DashboardLayout() {
       <aside
         className={`${
           sidebarCollapsed ? 'w-20' : 'w-72'
-        } bg-[#141414]/80 backdrop-blur-[20px] border-r border-white/5 flex flex-col transition-all duration-300 fixed h-full z-30`}
+        } bg-[#141414]/80 backdrop-blur-[20px] border-r border-white/5 flex flex-col transition-[width] duration-300 ease-out fixed h-full z-30`}
+        aria-label="대시보드 사이드바"
       >
         {/* Logo */}
-        <div className="p-6 border-b border-white/5 flex items-center gap-3">
+        <div className={`${sidebarCollapsed ? 'px-4' : 'px-6'} h-[88px] border-b border-white/5 flex items-center gap-3 transition-all duration-300`}>
           <div className="w-10 h-10 rounded-[12px] bg-apple-surface1 flex items-center justify-center flex-shrink-0">
             <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
@@ -116,30 +124,56 @@ export default function DashboardLayout() {
               <p className="text-[12px] text-white/50 tracking-[-0.12px]">Agent Mesh Platform</p>
             </div>
           )}
+          <button
+            type="button"
+            onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+            className={`ml-auto w-8 h-8 rounded-[8px] flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-colors ${
+              sidebarCollapsed ? 'hidden' : ''
+            }`}
+            aria-label="사이드바 접기"
+            aria-expanded={!sidebarCollapsed}
+            aria-controls="dashboard-sidebar-nav"
+            title="사이드바 접기"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.7} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        <nav id="dashboard-sidebar-nav" className="flex-1 p-4 space-y-1 overflow-y-auto">
           {filteredNavItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
               end={item.path === '/dashboard'}
+              aria-label={item.label}
+              title={sidebarCollapsed ? item.label : undefined}
               className={({ isActive }) =>
-                isActive ? 'sidebar-item-active' : 'sidebar-item'
+                `${isActive ? 'sidebar-item-active' : 'sidebar-item'} ${
+                  sidebarCollapsed ? 'h-12 justify-center px-0' : ''
+                }`
               }
             >
-              {item.icon}
-              {!sidebarCollapsed && <span className="text-sm">{item.label}</span>}
+              <span className="flex-shrink-0">{item.icon}</span>
+              {!sidebarCollapsed && <span className="text-sm whitespace-nowrap">{item.label}</span>}
             </NavLink>
           ))}
         </nav>
 
         {/* Collapse Toggle */}
         <button
-          onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-          className="p-4 border-t border-white/5 text-white/50 hover:text-white transition-colors"
+          type="button"
+          onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          className={`h-14 border-t border-white/5 text-white/50 hover:text-white hover:bg-white/5 transition-colors flex items-center ${
+            sidebarCollapsed ? 'justify-center' : 'justify-start gap-3 px-4'
+          }`}
           id="sidebar-toggle"
+          aria-label={sidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'}
+          aria-expanded={!sidebarCollapsed}
+          aria-controls="dashboard-sidebar-nav"
+          title={sidebarCollapsed ? '사이드바 펼치기' : '사이드바 접기'}
         >
           <svg
             className={`w-5 h-5 transition-transform duration-300 ${sidebarCollapsed ? 'rotate-180' : ''}`}
@@ -147,12 +181,13 @@ export default function DashboardLayout() {
           >
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
           </svg>
+          {!sidebarCollapsed && <span className="text-[13px] tracking-[-0.13px]">사이드바 접기</span>}
         </button>
 
         {/* User Info */}
         {user && (
           <div className="p-4 border-t border-white/5">
-            <div className="flex items-center gap-3">
+            <div className={`flex items-center ${sidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
               <div className="w-9 h-9 rounded-full bg-apple-surface2 flex items-center justify-center flex-shrink-0">
                 <span className="text-white text-[14px] font-semibold">
                   {user.name.charAt(0)}
@@ -181,7 +216,7 @@ export default function DashboardLayout() {
       </aside>
 
       {/* Main Content */}
-      <main className={`flex-1 ${sidebarCollapsed ? 'ml-20' : 'ml-72'} transition-all duration-300`}>
+      <main className={`flex-1 min-w-0 ${sidebarCollapsed ? 'ml-20' : 'ml-72'} transition-[margin-left] duration-300 ease-out`}>
         {/* Top Bar - Apple Navigation Glass */}
         <header className="h-[48px] bg-black/80 backdrop-blur-[20px] backdrop-saturate-[180%] flex items-center px-8 sticky top-0 z-20">
           <div className="flex-1" />

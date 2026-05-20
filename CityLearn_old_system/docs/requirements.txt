@@ -1,0 +1,12 @@
+setuptools
+jinja2
+myst-nb
+nbsphinx-link
+Sphinx<9
+docutils<0.22
+sphinxemoji
+sphinxcontrib-bibtex
+sphinx-argparse
+sphinx-copybutton
+sphinx-panels
+sphinx-rtd-theme
