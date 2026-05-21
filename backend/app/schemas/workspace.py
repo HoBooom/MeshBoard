@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from app.schemas.agent import AgentRead
 
@@ -30,8 +30,15 @@ class WorkspaceCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
+    metadata_: Dict[str, Any] = Field(
+        default_factory=dict,
+        validation_alias=AliasChoices("metadata", "metadata_"),
+        serialization_alias="metadata",
+    )
     agent_placements: List[WorkspaceAgentPlacement] = Field(default_factory=list)
     agent_subscriptions: List[WorkspaceAgentSubscriptionTarget] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class WorkspaceUpdateAgents(BaseModel):
@@ -109,6 +116,7 @@ class WorkspaceRead(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
+    metadata_: Dict[str, Any] = Field(default_factory=dict)
     owner_id: UUID
     state: str
     created_at: datetime

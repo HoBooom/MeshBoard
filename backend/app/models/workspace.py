@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 
 from sqlalchemy import String, Text, ForeignKey, DateTime, CheckConstraint, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID, ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -19,6 +19,7 @@ class Workspace(Base):
     name: Mapped[Optional[str]] = mapped_column(String(255))
     description: Mapped[Optional[str]] = mapped_column(Text)
     tags: Mapped[List[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
+    metadata_: Mapped[Dict[str, Any]] = mapped_column("metadata", JSONB, nullable=False, default=dict)
     owner_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("users.user_id"), nullable=False)
     state: Mapped[str] = mapped_column(String(20), nullable=False, default="ACTIVE")
     

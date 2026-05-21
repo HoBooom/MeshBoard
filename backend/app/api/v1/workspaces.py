@@ -655,6 +655,7 @@ async def create_workspace(
         name=payload.name.strip(),
         description=payload.description,
         tags=payload.tags,
+        metadata_=payload.metadata_,
         owner_id=current_user.user_id,
         state="ACTIVE",
     )

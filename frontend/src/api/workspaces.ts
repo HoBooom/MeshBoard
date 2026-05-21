@@ -11,6 +11,7 @@ export interface Workspace {
   name?: string | null;
   description?: string | null;
   tags: string[];
+  metadata_: Record<string, unknown>;
   owner_id: string;
   state: string;
   created_at: string;
@@ -162,6 +163,7 @@ export const workspacesApi = {
     name: string;
     description?: string;
     tags?: string[];
+    metadata?: Record<string, unknown>;
     agent_placements: Array<{ agent_id: string; quantity: number }>;
     agent_subscriptions?: Array<{
       source_agent_id: string;
