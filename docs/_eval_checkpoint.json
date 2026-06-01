@@ -1,0 +1,700 @@
+{
+  "config": {
+    "mode_steps": {
+      "noctrl": 40,
+      "sarbc": 40,
+      "deterministic": 40,
+      "macro_mesh": 20,
+      "llm_planner": 5
+    },
+    "horizons": [
+      5,
+      20,
+      40
+    ],
+    "planner_iter": 3,
+    "mesh_rounds": 3,
+    "llm_model": "anthropic/claude-sonnet-4-6",
+    "workspace_id": "50378387-7b6c-49a3-9a95-fc7b6f1335fb"
+  },
+  "datasets": {
+    "citylearn_challenge_2022_phase_all": {
+      "noctrl": {
+        "kpis_by_horizon": {
+          "5": {
+            "comfort_cost": null,
+            "emissions_cost": 0.999999999761495,
+            "grid_cost": 0.9239946011998428,
+            "resilience_cost": null,
+            "challenge_cost": 0.9619973004806689,
+            "cost_total": 0.9999999928013101,
+            "electricity_consumption_total": 1.0
+          },
+          "20": {
+            "comfort_cost": null,
+            "emissions_cost": 1.000000003092982,
+            "grid_cost": 0.9953859863193466,
+            "resilience_cost": null,
+            "challenge_cost": 0.9976929947061643,
+            "cost_total": 0.9999999988790895,
+            "electricity_consumption_total": 1.0
+          },
+          "40": {
+            "comfort_cost": null,
+            "emissions_cost": 1.000000001945972,
+            "grid_cost": 0.9917828339444734,
+            "resilience_cost": null,
+            "challenge_cost": 0.9958914179452227,
+            "cost_total": 0.999999999219496,
+            "electricity_consumption_total": 1.0
+          }
+        },
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 1.000000001945972,
+          "grid_cost": 0.9917828339444734,
+          "resilience_cost": null,
+          "challenge_cost": 0.9958914179452227,
+          "cost_total": 0.999999999219496,
+          "electricity_consumption_total": 1.0
+        },
+        "board_by_horizon": {
+          "5": {
+            "total_consumption_kwh": 62.218,
+            "power_cost_usd": 11.199,
+            "carbon_emission_kgco2": 26.132,
+            "peak_load_kw": 17.191,
+            "cumulative_reward": -70.645
+          },
+          "20": {
+            "total_consumption_kwh": 227.193,
+            "power_cost_usd": 40.895,
+            "carbon_emission_kgco2": 95.421,
+            "peak_load_kw": 26.959,
+            "cumulative_reward": -257.742
+          },
+          "40": {
+            "total_consumption_kwh": 486.523,
+            "power_cost_usd": 87.574,
+            "carbon_emission_kgco2": 204.34,
+            "peak_load_kw": 33.376,
+            "cumulative_reward": -555.161
+          }
+        },
+        "board": {
+          "total_consumption_kwh": 486.523,
+          "power_cost_usd": 87.574,
+          "carbon_emission_kgco2": 204.34,
+          "peak_load_kw": 33.376,
+          "cumulative_reward": -555.161
+        },
+        "final_horizon": 40,
+        "sarbc_kind": null,
+        "step_time_total_s": 0.33,
+        "step_time_mean_s": 0.008,
+        "step_time_max_s": 0.009,
+        "steps_completed": 40,
+        "wall_time_s": 6.73
+      },
+      "sarbc": {
+        "kpis_by_horizon": {
+          "5": {
+            "comfort_cost": null,
+            "emissions_cost": 0.999999999761495,
+            "grid_cost": 0.9239946011998428,
+            "resilience_cost": null,
+            "challenge_cost": 0.9619973004806689,
+            "cost_total": 0.9999999928013101,
+            "electricity_consumption_total": 1.0
+          },
+          "20": {
+            "comfort_cost": null,
+            "emissions_cost": 1.727689715055422,
+            "grid_cost": 0.5887448189062604,
+            "resilience_cost": null,
+            "challenge_cost": 1.1582172669808413,
+            "cost_total": 1.7036467484415376,
+            "electricity_consumption_total": 1.777416408300621
+          },
+          "40": {
+            "comfort_cost": null,
+            "emissions_cost": 1.04376561309629,
+            "grid_cost": 0.7722864146772018,
+            "resilience_cost": null,
+            "challenge_cost": 0.908026013886746,
+            "cost_total": 0.9808050061445971,
+            "electricity_consumption_total": 1.0499539971871297
+          }
+        },
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 1.04376561309629,
+          "grid_cost": 0.7722864146772018,
+          "resilience_cost": null,
+          "challenge_cost": 0.908026013886746,
+          "cost_total": 0.9808050061445971,
+          "electricity_consumption_total": 1.0499539971871297
+        },
+        "board_by_horizon": {
+          "5": {
+            "total_consumption_kwh": 62.218,
+            "power_cost_usd": 11.199,
+            "carbon_emission_kgco2": 26.132,
+            "peak_load_kw": 17.191,
+            "cumulative_reward": -70.645
+          },
+          "20": {
+            "total_consumption_kwh": 226.35,
+            "power_cost_usd": 40.743,
+            "carbon_emission_kgco2": 95.067,
+            "peak_load_kw": 17.191,
+            "cumulative_reward": -255.846
+          },
+          "40": {
+            "total_consumption_kwh": 485.905,
+            "power_cost_usd": 87.463,
+            "carbon_emission_kgco2": 204.08,
+            "peak_load_kw": 27.739,
+            "cumulative_reward": -552.436
+          }
+        },
+        "board": {
+          "total_consumption_kwh": 485.905,
+          "power_cost_usd": 87.463,
+          "carbon_emission_kgco2": 204.08,
+          "peak_load_kw": 27.739,
+          "cumulative_reward": -552.436
+        },
+        "final_horizon": 40,
+        "sarbc_kind": "sacrbc_trained",
+        "step_time_total_s": 0.54,
+        "step_time_mean_s": 0.014,
+        "step_time_max_s": 0.015,
+        "steps_completed": 40,
+        "wall_time_s": 5.65
+      },
+      "deterministic": {
+        "kpis_by_horizon": {
+          "5": {
+            "comfort_cost": null,
+            "emissions_cost": 1.7170108613359611,
+            "grid_cost": 4.297789049261979,
+            "resilience_cost": null,
+            "challenge_cost": 3.00739995529897,
+            "cost_total": 1.7113149241935157,
+            "electricity_consumption_total": 1.7113149344189662
+          },
+          "20": {
+            "comfort_cost": null,
+            "emissions_cost": 2.517019204292084,
+            "grid_cost": 1.2222416868027368,
+            "resilience_cost": null,
+            "challenge_cost": 1.8696304455474104,
+            "cost_total": 3.0556267424962575,
+            "electricity_consumption_total": 3.1984006874493995
+          },
+          "40": {
+            "comfort_cost": null,
+            "emissions_cost": 1.2765157600627637,
+            "grid_cost": 1.0469331562345974,
+            "resilience_cost": null,
+            "challenge_cost": 1.1617244581486805,
+            "cost_total": 1.3126485148705,
+            "electricity_consumption_total": 1.3809559676575347
+          }
+        },
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 1.2765157600627637,
+          "grid_cost": 1.0469331562345974,
+          "resilience_cost": null,
+          "challenge_cost": 1.1617244581486805,
+          "cost_total": 1.3126485148705,
+          "electricity_consumption_total": 1.3809559676575347
+        },
+        "board_by_horizon": {
+          "5": {
+            "total_consumption_kwh": 116.218,
+            "power_cost_usd": 20.919,
+            "carbon_emission_kgco2": 48.812,
+            "peak_load_kw": 35.191,
+            "cumulative_reward": -136.33
+          },
+          "20": {
+            "total_consumption_kwh": 326.253,
+            "power_cost_usd": 58.726,
+            "carbon_emission_kgco2": 137.026,
+            "peak_load_kw": 35.191,
+            "cumulative_reward": -377.138
+          },
+          "40": {
+            "total_consumption_kwh": 588.367,
+            "power_cost_usd": 105.906,
+            "carbon_emission_kgco2": 247.114,
+            "peak_load_kw": 35.191,
+            "cumulative_reward": -677.666
+          }
+        },
+        "board": {
+          "total_consumption_kwh": 588.367,
+          "power_cost_usd": 105.906,
+          "carbon_emission_kgco2": 247.114,
+          "peak_load_kw": 35.191,
+          "cumulative_reward": -677.666
+        },
+        "final_horizon": 40,
+        "sarbc_kind": null,
+        "step_time_total_s": 0.36,
+        "step_time_mean_s": 0.009,
+        "step_time_max_s": 0.01,
+        "steps_completed": 40,
+        "wall_time_s": 4.54
+      },
+      "macro_mesh": {
+        "kpis_by_horizon": {
+          "5": {
+            "comfort_cost": null,
+            "emissions_cost": 0.999999999761495,
+            "grid_cost": 0.9239946011998428,
+            "resilience_cost": null,
+            "challenge_cost": 0.9619973004806689,
+            "cost_total": 0.9999999928013101,
+            "electricity_consumption_total": 1.0
+          },
+          "20": {
+            "comfort_cost": null,
+            "emissions_cost": 1.0173674744758079,
+            "grid_cost": 1.0005706139963546,
+            "resilience_cost": null,
+            "challenge_cost": 1.0089690442360812,
+            "cost_total": 1.0317838423516783,
+            "electricity_consumption_total": 1.0146583091722703
+          }
+        },
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 1.0173674744758079,
+          "grid_cost": 1.0005706139963546,
+          "resilience_cost": null,
+          "challenge_cost": 1.0089690442360812,
+          "cost_total": 1.0317838423516783,
+          "electricity_consumption_total": 1.0146583091722703
+        },
+        "board_by_horizon": {
+          "5": {
+            "total_consumption_kwh": 62.218,
+            "power_cost_usd": 11.199,
+            "carbon_emission_kgco2": 26.132,
+            "peak_load_kw": 17.191,
+            "cumulative_reward": -70.645
+          },
+          "20": {
+            "total_consumption_kwh": 230.269,
+            "power_cost_usd": 41.448,
+            "carbon_emission_kgco2": 96.713,
+            "peak_load_kw": 27.209,
+            "cumulative_reward": -261.521
+          }
+        },
+        "board": {
+          "total_consumption_kwh": 230.269,
+          "power_cost_usd": 41.448,
+          "carbon_emission_kgco2": 96.713,
+          "peak_load_kw": 27.209,
+          "cumulative_reward": -261.521
+        },
+        "final_horizon": 20,
+        "sarbc_kind": null,
+        "step_time_total_s": 844.7,
+        "step_time_mean_s": 42.235,
+        "step_time_max_s": 161.563,
+        "steps_completed": 20,
+        "wall_time_s": 851.04
+      },
+      "llm_planner": {
+        "kpis_by_horizon": {
+          "5": {
+            "comfort_cost": null,
+            "emissions_cost": 0.999999999761495,
+            "grid_cost": 0.9239946011998428,
+            "resilience_cost": null,
+            "challenge_cost": 0.9619973004806689,
+            "cost_total": 0.9999999928013101,
+            "electricity_consumption_total": 1.0
+          }
+        },
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 0.999999999761495,
+          "grid_cost": 0.9239946011998428,
+          "resilience_cost": null,
+          "challenge_cost": 0.9619973004806689,
+          "cost_total": 0.9999999928013101,
+          "electricity_consumption_total": 1.0
+        },
+        "board_by_horizon": {
+          "5": {
+            "total_consumption_kwh": 62.218,
+            "power_cost_usd": 11.199,
+            "carbon_emission_kgco2": 26.132,
+            "peak_load_kw": 17.191,
+            "cumulative_reward": -70.645
+          }
+        },
+        "board": {
+          "total_consumption_kwh": 62.218,
+          "power_cost_usd": 11.199,
+          "carbon_emission_kgco2": 26.132,
+          "peak_load_kw": 17.191,
+          "cumulative_reward": -70.645
+        },
+        "final_horizon": 5,
+        "sarbc_kind": null,
+        "step_time_total_s": 455.27,
+        "step_time_mean_s": 91.055,
+        "step_time_max_s": 192.333,
+        "steps_completed": 5,
+        "wall_time_s": 458.97
+      }
+    },
+    "citylearn_challenge_2023_phase_1": {
+      "noctrl": {
+        "kpis_by_horizon": {
+          "5": {
+            "comfort_cost": 0.0,
+            "emissions_cost": 1.0000000034180752,
+            "grid_cost": 0.848863071646314,
+            "resilience_cost": null,
+            "challenge_cost": 0.6162876916881297,
+            "cost_total": 1.0000000052619284,
+            "electricity_consumption_total": 1.0
+          },
+          "20": {
+            "comfort_cost": 0.2577686045178305,
+            "emissions_cost": 0.5658611005242346,
+            "grid_cost": 1.0543159238651012,
+            "resilience_cost": null,
+            "challenge_cost": 0.6259818763023888,
+            "cost_total": 0.47923026582537603,
+            "electricity_consumption_total": 0.582242049581203
+          },
+          "40": {
+            "comfort_cost": 0.6306652046783626,
+            "emissions_cost": 0.47483837600901985,
+            "grid_cost": 0.9656704936071742,
+            "resilience_cost": null,
+            "challenge_cost": 0.6903913580981856,
+            "cost_total": 0.44776954541798303,
+            "electricity_consumption_total": 0.49030969726337076
+          }
+        },
+        "kpis": {
+          "comfort_cost": 0.6306652046783626,
+          "emissions_cost": 0.47483837600901985,
+          "grid_cost": 0.9656704936071742,
+          "resilience_cost": null,
+          "challenge_cost": 0.6903913580981856,
+          "cost_total": 0.44776954541798303,
+          "electricity_consumption_total": 0.49030969726337076
+        },
+        "board_by_horizon": {
+          "5": {
+            "total_consumption_kwh": 6.787,
+            "power_cost_usd": 1.222,
+            "carbon_emission_kgco2": 2.851,
+            "peak_load_kw": 1.505,
+            "cumulative_reward": -6.893
+          },
+          "20": {
+            "total_consumption_kwh": 39.667,
+            "power_cost_usd": 7.14,
+            "carbon_emission_kgco2": 16.66,
+            "peak_load_kw": 9.774,
+            "cumulative_reward": -41.885
+          },
+          "40": {
+            "total_consumption_kwh": 72.459,
+            "power_cost_usd": 13.043,
+            "carbon_emission_kgco2": 30.433,
+            "peak_load_kw": 9.774,
+            "cumulative_reward": -75.921
+          }
+        },
+        "board": {
+          "total_consumption_kwh": 72.459,
+          "power_cost_usd": 13.043,
+          "carbon_emission_kgco2": 30.433,
+          "peak_load_kw": 9.774,
+          "cumulative_reward": -75.921
+        },
+        "final_horizon": 40,
+        "sarbc_kind": null,
+        "step_time_total_s": 0.17,
+        "step_time_mean_s": 0.004,
+        "step_time_max_s": 0.02,
+        "steps_completed": 40,
+        "wall_time_s": 0.48
+      },
+      "sarbc": {
+        "kpis_by_horizon": {
+          "5": {
+            "comfort_cost": 0.0,
+            "emissions_cost": 1.7792759220591445,
+            "grid_cost": 1.065319505290129,
+            "resilience_cost": null,
+            "challenge_cost": 0.9481984757830911,
+            "cost_total": 1.7796619101752846,
+            "electricity_consumption_total": 1.7796618993460938
+          },
+          "20": {
+            "comfort_cost": 0.1638573558078202,
+            "emissions_cost": 1.2727239650935014,
+            "grid_cost": 0.9789603941135803,
+            "resilience_cost": null,
+            "challenge_cost": 0.8051805716716339,
+            "cost_total": 1.254846131862841,
+            "electricity_consumption_total": 1.2800338574315817
+          },
+          "40": {
+            "comfort_cost": 0.5406545209176788,
+            "emissions_cost": 1.4995138465148663,
+            "grid_cost": 0.978830668606591,
+            "resilience_cost": null,
+            "challenge_cost": 1.0063330120130454,
+            "cost_total": 1.485863858608161,
+            "electricity_consumption_total": 1.5306182292846755
+          }
+        },
+        "kpis": {
+          "comfort_cost": 0.5406545209176788,
+          "emissions_cost": 1.4995138465148663,
+          "grid_cost": 0.978830668606591,
+          "resilience_cost": null,
+          "challenge_cost": 1.0063330120130454,
+          "cost_total": 1.485863858608161,
+          "electricity_consumption_total": 1.5306182292846755
+        },
+        "board_by_horizon": {
+          "5": {
+            "total_consumption_kwh": 10.541,
+            "power_cost_usd": 1.897,
+            "carbon_emission_kgco2": 4.427,
+            "peak_load_kw": 2.256,
+            "cumulative_reward": -10.942
+          },
+          "20": {
+            "total_consumption_kwh": 87.363,
+            "power_cost_usd": 15.725,
+            "carbon_emission_kgco2": 36.692,
+            "peak_load_kw": 9.761,
+            "cumulative_reward": -95.027
+          },
+          "40": {
+            "total_consumption_kwh": 225.328,
+            "power_cost_usd": 40.559,
+            "carbon_emission_kgco2": 94.638,
+            "peak_load_kw": 10.956,
+            "cumulative_reward": -247.134
+          }
+        },
+        "board": {
+          "total_consumption_kwh": 225.328,
+          "power_cost_usd": 40.559,
+          "carbon_emission_kgco2": 94.638,
+          "peak_load_kw": 10.956,
+          "cumulative_reward": -247.134
+        },
+        "final_horizon": 40,
+        "sarbc_kind": "rbc_fallback",
+        "step_time_total_s": 0.16,
+        "step_time_mean_s": 0.004,
+        "step_time_max_s": 0.006,
+        "steps_completed": 40,
+        "wall_time_s": 1.4
+      },
+      "deterministic": {
+        "kpis_by_horizon": {
+          "5": {
+            "comfort_cost": 0.0,
+            "emissions_cost": 2.5092779688695708,
+            "grid_cost": 2.724086787309577,
+            "resilience_cost": null,
+            "challenge_cost": 1.7444549187263825,
+            "cost_total": 2.494611758521778,
+            "electricity_consumption_total": 2.4946117411705537
+          },
+          "20": {
+            "comfort_cost": 0.2577686045178305,
+            "emissions_cost": 0.6961620723043492,
+            "grid_cost": 1.0351191762965222,
+            "resilience_cost": null,
+            "challenge_cost": 0.663016617706234,
+            "cost_total": 0.5996216758261429,
+            "electricity_consumption_total": 0.727584559170511
+          },
+          "40": {
+            "comfort_cost": 0.6306652046783626,
+            "emissions_cost": 0.530016604204444,
+            "grid_cost": 0.9591005307058742,
+            "resilience_cost": null,
+            "challenge_cost": 0.7065941131962269,
+            "cost_total": 0.5076973858121677,
+            "electricity_consumption_total": 0.5532751021394491
+          }
+        },
+        "kpis": {
+          "comfort_cost": 0.6306652046783626,
+          "emissions_cost": 0.530016604204444,
+          "grid_cost": 0.9591005307058742,
+          "resilience_cost": null,
+          "challenge_cost": 0.7065941131962269,
+          "cost_total": 0.5076973858121677,
+          "electricity_consumption_total": 0.5532751021394491
+        },
+        "board_by_horizon": {
+          "5": {
+            "total_consumption_kwh": 13.714,
+            "power_cost_usd": 2.469,
+            "carbon_emission_kgco2": 5.76,
+            "peak_load_kw": 3.903,
+            "cumulative_reward": -14.44
+          },
+          "20": {
+            "total_consumption_kwh": 49.261,
+            "power_cost_usd": 8.867,
+            "carbon_emission_kgco2": 20.689,
+            "peak_load_kw": 10.016,
+            "cumulative_reward": -52.326
+          },
+          "40": {
+            "total_consumption_kwh": 81.025,
+            "power_cost_usd": 14.584,
+            "carbon_emission_kgco2": 34.03,
+            "peak_load_kw": 10.016,
+            "cumulative_reward": -85.272
+          }
+        },
+        "board": {
+          "total_consumption_kwh": 81.025,
+          "power_cost_usd": 14.584,
+          "carbon_emission_kgco2": 34.03,
+          "peak_load_kw": 10.016,
+          "cumulative_reward": -85.272
+        },
+        "final_horizon": 40,
+        "sarbc_kind": null,
+        "step_time_total_s": 0.17,
+        "step_time_mean_s": 0.004,
+        "step_time_max_s": 0.006,
+        "steps_completed": 40,
+        "wall_time_s": 0.49
+      },
+      "macro_mesh": {
+        "kpis_by_horizon": {
+          "5": {
+            "comfort_cost": 0.0,
+            "emissions_cost": 1.0000000034180752,
+            "grid_cost": 0.848863071646314,
+            "resilience_cost": null,
+            "challenge_cost": 0.6162876916881297,
+            "cost_total": 1.0000000052619284,
+            "electricity_consumption_total": 1.0
+          },
+          "20": {
+            "comfort_cost": 0.2577686045178305,
+            "emissions_cost": 0.5658611005242346,
+            "grid_cost": 1.0543159238651012,
+            "resilience_cost": null,
+            "challenge_cost": 0.6259818763023888,
+            "cost_total": 0.47923026582537603,
+            "electricity_consumption_total": 0.582242049581203
+          }
+        },
+        "kpis": {
+          "comfort_cost": 0.2577686045178305,
+          "emissions_cost": 0.5658611005242346,
+          "grid_cost": 1.0543159238651012,
+          "resilience_cost": null,
+          "challenge_cost": 0.6259818763023888,
+          "cost_total": 0.47923026582537603,
+          "electricity_consumption_total": 0.582242049581203
+        },
+        "board_by_horizon": {
+          "5": {
+            "total_consumption_kwh": 6.787,
+            "power_cost_usd": 1.222,
+            "carbon_emission_kgco2": 2.851,
+            "peak_load_kw": 1.505,
+            "cumulative_reward": -6.893
+          },
+          "20": {
+            "total_consumption_kwh": 39.667,
+            "power_cost_usd": 7.14,
+            "carbon_emission_kgco2": 16.66,
+            "peak_load_kw": 9.774,
+            "cumulative_reward": -41.885
+          }
+        },
+        "board": {
+          "total_consumption_kwh": 39.667,
+          "power_cost_usd": 7.14,
+          "carbon_emission_kgco2": 16.66,
+          "peak_load_kw": 9.774,
+          "cumulative_reward": -41.885
+        },
+        "final_horizon": 20,
+        "sarbc_kind": null,
+        "step_time_total_s": 368.82,
+        "step_time_mean_s": 18.441,
+        "step_time_max_s": 23.372,
+        "steps_completed": 20,
+        "wall_time_s": 369.06
+      },
+      "llm_planner": {
+        "kpis_by_horizon": {
+          "5": {
+            "comfort_cost": 0.0,
+            "emissions_cost": 1.0000000034180752,
+            "grid_cost": 0.848863071646314,
+            "resilience_cost": null,
+            "challenge_cost": 0.6162876916881297,
+            "cost_total": 1.0000000052619284,
+            "electricity_consumption_total": 1.0
+          }
+        },
+        "kpis": {
+          "comfort_cost": 0.0,
+          "emissions_cost": 1.0000000034180752,
+          "grid_cost": 0.848863071646314,
+          "resilience_cost": null,
+          "challenge_cost": 0.6162876916881297,
+          "cost_total": 1.0000000052619284,
+          "electricity_consumption_total": 1.0
+        },
+        "board_by_horizon": {
+          "5": {
+            "total_consumption_kwh": 6.787,
+            "power_cost_usd": 1.222,
+            "carbon_emission_kgco2": 2.851,
+            "peak_load_kw": 1.505,
+            "cumulative_reward": -6.893
+          }
+        },
+        "board": {
+          "total_consumption_kwh": 6.787,
+          "power_cost_usd": 1.222,
+          "carbon_emission_kgco2": 2.851,
+          "peak_load_kw": 1.505,
+          "cumulative_reward": -6.893
+        },
+        "final_horizon": 5,
+        "sarbc_kind": null,
+        "step_time_total_s": 874.02,
+        "step_time_mean_s": 174.803,
+        "step_time_max_s": 219.948,
+        "steps_completed": 5,
+        "wall_time_s": 874.19
+      }
+    }
+  }
+}

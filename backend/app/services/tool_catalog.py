@@ -258,6 +258,216 @@ def fetch_url(url: str, max_chars: int = 4000) -> str:
         return f"URL 조회 오류: {type(exc).__name__}: {exc}"
 
 
+# ── CityLearn Grid-Agent MCP tools (AM-mcp-001) ─────────────────────
+#
+# 핵심 원칙
+# - preview-only: 어떤 도구도 board snapshot이나 DB를 변경하지 않는다.
+# - 입력은 string/int 등 단순 primitive. JSON object 입력은 actions_json(string)으로 통일
+#   (agent_runtime의 텍스트 JSON tool protocol과 일관).
+# - 출력은 항상 JSON string. token 절약을 위해 snapshot 전체가 아닌 축약 dict.
+# - mapping/권한 컨텍스트가 없으므로 mapping violation은 생성하지 않는다.
+#   (AM-api-001의 plan endpoint가 mapping을 알고 있는 권한 있는 경로다.)
+
+_GRID_AGENT_TOOL_STEP_MIN = 0
+_GRID_AGENT_TOOL_STEP_MAX = 8759
+
+
+def _coerce_step(step: int) -> int:
+    try:
+        s = int(step)
+    except (TypeError, ValueError):
+        return _GRID_AGENT_TOOL_STEP_MIN
+    return max(_GRID_AGENT_TOOL_STEP_MIN, min(_GRID_AGENT_TOOL_STEP_MAX, s))
+
+
+def _grid_agent_snapshot(step: int, baseline_model: str, agent_mesh_mode: str) -> Dict[str, Any]:
+    # Lazy import — tool_catalog는 backend 부팅 시 import되므로 circular 방지.
+    from app.services.citylearn_board import get_board_snapshot
+
+    valid_baselines = {"basic_rbc", "optimized_rbc", "basic_battery_rbc", "sacrbc", "sac", "marlisa"}
+    valid_modes = {"not_configured", "demo_heuristic", "configured_agents", "grid_agent"}
+    bm = baseline_model if baseline_model in valid_baselines else "basic_rbc"
+    am = agent_mesh_mode if agent_mesh_mode in valid_modes else "demo_heuristic"
+    return get_board_snapshot(step=_coerce_step(step), baseline_model=bm, agent_mesh_mode=am, window=24)  # type: ignore[arg-type]
+
+
+@lc_tool
+def get_citylearn_board_state(step: int = 0, baseline_model: str = "basic_rbc", agent_mesh_mode: str = "demo_heuristic") -> str:
+    """현재 CityLearn board snapshot을 축약된 JSON 문자열로 반환합니다.
+
+    Args:
+        step: 조회할 time step (0~8759).
+        baseline_model: basic_rbc/optimized_rbc/basic_battery_rbc/sacrbc/sac/marlisa 중 하나.
+        agent_mesh_mode: not_configured/demo_heuristic/configured_agents/grid_agent 중 하나.
+    """
+    try:
+        snapshot = _grid_agent_snapshot(step, baseline_model, agent_mesh_mode)
+    except Exception as exc:
+        return json.dumps({"error": f"snapshot 조회 실패: {type(exc).__name__}: {exc}"})
+
+    buildings = [
+        {
+            "building_id": b.get("building_id"),
+            "battery_soc": round(float(b.get("battery_soc", 0.0)), 3),
+            "net_load_kwh": round(float(b.get("agent_mesh_net_load_kwh", 0.0)), 3),
+            "pv_generation_kwh": round(float(b.get("pv_generation_kwh", 0.0)), 3),
+        }
+        for b in snapshot.get("buildings", [])
+    ]
+    district = sum(b["net_load_kwh"] for b in buildings)
+    return json.dumps(
+        {
+            "step": snapshot.get("step"),
+            "baseline_model": baseline_model,
+            "agent_mesh_mode": agent_mesh_mode,
+            "district_net_load_kwh": round(district, 3),
+            "building_count": len(buildings),
+            "buildings": buildings,
+        },
+        ensure_ascii=False,
+    )
+
+
+@lc_tool
+def detect_citylearn_violations(step: int = 0, baseline_model: str = "basic_rbc", agent_mesh_mode: str = "demo_heuristic") -> str:
+    """현재 step의 peak / ramping / soc / fairness violation 목록을 JSON 문자열로 반환합니다.
+
+    mapping violation은 workspace 컨텍스트가 필요하므로 이 도구에서는 제외됩니다 — Grid-Agent
+    plan API(권한 있는 경로)에서만 생성됩니다.
+
+    Args:
+        step: 조회할 time step (0~8759).
+        baseline_model: 6개 baseline 중 하나.
+        agent_mesh_mode: 4개 mode 중 하나.
+    """
+    from uuid import uuid4
+    from app.services.citylearn_grid_agent import TopologyAnalyzer, ViolationDetector
+
+    try:
+        snapshot = _grid_agent_snapshot(step, baseline_model, agent_mesh_mode)
+        topology = TopologyAnalyzer().analyze(
+            workspace_id=uuid4(),
+            snapshot=snapshot,
+            mapping=None,
+            baseline_model=baseline_model if baseline_model in {"basic_rbc", "optimized_rbc", "basic_battery_rbc", "sacrbc", "sac", "marlisa"} else None,  # type: ignore[arg-type]
+            agent_mesh_mode=agent_mesh_mode if agent_mesh_mode in {"not_configured", "demo_heuristic", "configured_agents", "grid_agent"} else None,  # type: ignore[arg-type]
+        )
+        violations = ViolationDetector().detect_initial(topology=topology, snapshot=snapshot)
+    except Exception as exc:
+        return json.dumps({"error": f"violation 검출 실패: {type(exc).__name__}: {exc}"})
+
+    return json.dumps(
+        {
+            "step": topology.step,
+            "violations": [
+                {
+                    "type": v.type,
+                    "building_id": v.building_id,
+                    "severity": v.severity,
+                    "current_value": v.current_value,
+                    "limit_value": v.limit_value,
+                    "description": v.description,
+                }
+                for v in violations
+                if v.type != "mapping"  # mapping은 권한 경로에서만
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
+@lc_tool
+def validate_citylearn_battery_plan(actions_json: str, step: int = 0, baseline_model: str = "basic_rbc", agent_mesh_mode: str = "demo_heuristic") -> str:
+    """배터리 action plan을 sandbox에서 검증하고 결과를 JSON 문자열로 반환합니다.
+
+    Args:
+        actions_json: action 배열의 JSON 문자열.
+            예: '[{"building_id":"Building_1","action":-0.4,"mode":"discharge","reason":"peak shave","expected_effect":"-1.28 kWh","confidence":0.7}]'
+            mode는 charge/discharge/hold, action ∈ [-1.0, 1.0], confidence ∈ [0.0, 1.0].
+        step: 검증 기준 time step.
+        baseline_model: 6개 baseline 중 하나.
+        agent_mesh_mode: 4개 mode 중 하나.
+
+    Returns:
+        approved, score_before, score_after, feedback, remaining_violations, new_violations만 포함하는 축약 JSON.
+        snapshot 전체는 반환하지 않습니다 (토큰 절약).
+    """
+    from uuid import uuid4
+    from app.schemas.citylearn_grid_agent import CityLearnAction, CityLearnPlan
+    from app.services.citylearn_grid_agent import (
+        ConstraintValidator, SandboxExecutor, TopologyAnalyzer, ViolationDetector,
+    )
+
+    try:
+        parsed = json.loads(actions_json)
+    except json.JSONDecodeError as exc:
+        return json.dumps({"approved": False, "feedback": f"actions_json JSON 파싱 실패: {exc}"})
+
+    if not isinstance(parsed, list):
+        return json.dumps({"approved": False, "feedback": "actions_json은 action 객체의 JSON 배열이어야 합니다."})
+
+    actions: List[CityLearnAction] = []
+    for raw in parsed:
+        if not isinstance(raw, dict):
+            return json.dumps({"approved": False, "feedback": "각 action은 JSON object여야 합니다."})
+        try:
+            actions.append(CityLearnAction(**raw))
+        except Exception as exc:
+            return json.dumps({"approved": False, "feedback": f"action 스키마 검증 실패: {exc}"})
+
+    plan = CityLearnPlan(
+        strategy_summary="(LLM tool call) sandbox validation request",
+        actions=actions,
+        risk_assessment="(LLM tool call)",
+    )
+
+    try:
+        snapshot = _grid_agent_snapshot(step, baseline_model, agent_mesh_mode)
+        analyzer = TopologyAnalyzer()
+        topology_before = analyzer.analyze(
+            workspace_id=uuid4(), snapshot=snapshot, mapping=None,
+            baseline_model=baseline_model if baseline_model in {"basic_rbc", "optimized_rbc", "basic_battery_rbc", "sacrbc", "sac", "marlisa"} else None,  # type: ignore[arg-type]
+            agent_mesh_mode=agent_mesh_mode if agent_mesh_mode in {"not_configured", "demo_heuristic", "configured_agents", "grid_agent"} else None,  # type: ignore[arg-type]
+        )
+        initial_violations = ViolationDetector().detect_initial(topology=topology_before, snapshot=snapshot)
+        sandbox = SandboxExecutor().execute(snapshot=snapshot, plan=plan)
+        topology_after = analyzer.analyze(
+            workspace_id=uuid4(), snapshot=sandbox, mapping=None,
+            baseline_model=baseline_model if baseline_model in {"basic_rbc", "optimized_rbc", "basic_battery_rbc", "sacrbc", "sac", "marlisa"} else None,  # type: ignore[arg-type]
+            agent_mesh_mode=agent_mesh_mode if agent_mesh_mode in {"not_configured", "demo_heuristic", "configured_agents", "grid_agent"} else None,  # type: ignore[arg-type]
+        )
+        result = ConstraintValidator().validate(
+            snapshot_before=snapshot,
+            snapshot_after=sandbox,
+            topology_before=topology_before,
+            topology_after=topology_after,
+            plan=plan,
+            initial_violations=initial_violations,
+        )
+    except Exception as exc:
+        return json.dumps({"approved": False, "feedback": f"sandbox 실행 실패: {type(exc).__name__}: {exc}"})
+
+    return json.dumps(
+        {
+            "approved": result.approved,
+            "status": result.status,
+            "score_before": result.score_before,
+            "score_after": result.score_after,
+            "feedback": result.feedback,
+            "forbidden_action_keys": result.forbidden_action_keys,
+            "remaining_violations": [
+                {"type": v.type, "building_id": v.building_id, "description": v.description}
+                for v in result.remaining_violations
+            ],
+            "new_violations": [
+                {"type": v.type, "building_id": v.building_id, "description": v.description}
+                for v in result.new_violations
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
 @lc_tool
 def lookup_employee_leave(employee_id: str) -> str:
     """직원의 연차 잔여일 정보를 조회합니다 (데모용 고정 데이터).
@@ -310,6 +520,9 @@ TOOL_REGISTRY: Dict[str, InvokableTool] = {
     "fetch_url": fetch_url,
     "lookup_employee_leave": lookup_employee_leave,
     "search_knowledge_base": search_knowledge_base,
+    "get_citylearn_board_state": get_citylearn_board_state,
+    "detect_citylearn_violations": detect_citylearn_violations,
+    "validate_citylearn_battery_plan": validate_citylearn_battery_plan,
 }
 
 
@@ -353,6 +566,21 @@ TOOL_CATALOG: List[Dict[str, str]] = [
         "id": "search_knowledge_base",
         "name": "사내 지식베이스 검색 (데모)",
         "description": "사내 FAQ(비밀번호/휴가/VPN/출장)에서 키워드로 정보를 찾습니다.",
+    },
+    {
+        "id": "get_citylearn_board_state",
+        "name": "CityLearn Board 상태 조회",
+        "description": "Grid-Agent용: 지정 step의 CityLearn board snapshot을 축약 JSON으로 반환합니다 (district load + building 17개의 SOC/net_load/PV).",
+    },
+    {
+        "id": "detect_citylearn_violations",
+        "name": "CityLearn Violation 검출",
+        "description": "Grid-Agent용: peak/ramping/soc/fairness violation을 JSON으로 반환합니다. mapping violation은 권한 있는 plan API에서만 노출됩니다.",
+    },
+    {
+        "id": "validate_citylearn_battery_plan",
+        "name": "CityLearn 배터리 Plan 검증",
+        "description": "Grid-Agent용: actions_json 문자열을 sandbox에서 검증하여 approved/score_before/score_after/feedback/forbidden_action_keys/violations를 반환합니다. 적용은 하지 않습니다 (preview-only).",
     },
 ]
 

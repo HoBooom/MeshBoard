@@ -1,0 +1,33 @@
+{
+  "public_datasets": [
+    "citylearn_challenge_2023_phase_2_online_evaluation_1",
+    "citylearn_challenge_2023_phase_2_online_evaluation_2",
+    "citylearn_challenge_2023_phase_2_online_evaluation_3"
+  ],
+  "private_datasets": [
+    "citylearn_challenge_2023_phase_3_1",
+    "citylearn_challenge_2023_phase_3_2",
+    "citylearn_challenge_2023_phase_3_3"
+  ],
+  "controllers": [
+    "chesca_official",
+    "chesca_mesh"
+  ],
+  "episode_steps": null,
+  "challenge_weights": {
+    "comfort_cost": 0.3,
+    "emissions_cost": 0.1,
+    "grid_cost": 0.3,
+    "resilience_cost": 0.3
+  },
+  "grid_submetrics_equal_weight": [
+    "ramping_average",
+    "daily_one_minus_load_factor_average",
+    "daily_peak_average",
+    "annual_peak_average"
+  ],
+  "resilience_submetrics_equal_weight": [
+    "one_minus_thermal_resilience_proportion",
+    "power_outage_normalized_unserved_energy_total"
+  ]
+}

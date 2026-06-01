@@ -1,0 +1,27 @@
+{
+  "dataset_name": "citylearn_challenge_2023_phase_2_online_evaluation_1",
+  "episode_steps": null,
+  "official_schema": "/content/drive/MyDrive/chesca_vs_mesh/CHESCA-main/data/schemas/citylearn_challenge_2023_phase_2_online_evaluation_1/schema.json",
+  "controllers": [
+    "chesca_official",
+    "chesca_mesh"
+  ],
+  "power_outage_seed": null,
+  "mesh_config": {
+    "rounds": 3,
+    "offer_step": 0.04,
+    "history_window": 168,
+    "target_quantile": 0.65,
+    "minimum_history": 12,
+    "reserve_soc": 0.55,
+    "peak_weight": 1.0,
+    "ramp_weight": 0.32,
+    "price_weight": 0.1,
+    "carbon_weight": 0.08,
+    "recovery_weight": 0.45,
+    "wear_weight": 0.055,
+    "reserve_weight": 0.4,
+    "action_deviation_weight": 0.025
+  },
+  "reproduction_note": "chesca_official loads the unmodified CHESCA-main SubmissionAgent. chesca_mesh preserves that agent as an outside option and adds peer battery negotiation."
+}

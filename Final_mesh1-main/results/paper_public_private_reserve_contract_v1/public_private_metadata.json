@@ -1,0 +1,48 @@
+{
+  "public_datasets": [
+    "citylearn_challenge_2023_phase_2_online_evaluation_1",
+    "citylearn_challenge_2023_phase_2_online_evaluation_2",
+    "citylearn_challenge_2023_phase_2_online_evaluation_3"
+  ],
+  "private_datasets": [
+    "citylearn_challenge_2023_phase_3_1",
+    "citylearn_challenge_2023_phase_3_2",
+    "citylearn_challenge_2023_phase_3_3"
+  ],
+  "controllers": [
+    "chesca_official",
+    "chesca_mesh",
+    "chesca_reserve_contract_mesh"
+  ],
+  "episode_steps": null,
+  "challenge_weights": {
+    "comfort_cost": 0.3,
+    "emissions_cost": 0.1,
+    "grid_cost": 0.3,
+    "resilience_cost": 0.3
+  },
+  "grid_submetrics_equal_weight": [
+    "ramping_average",
+    "daily_one_minus_load_factor_average",
+    "daily_peak_average",
+    "annual_peak_average"
+  ],
+  "resilience_submetrics_equal_weight": [
+    "one_minus_thermal_resilience_proportion",
+    "power_outage_normalized_unserved_energy_total"
+  ],
+  "reserve_contract_config": {
+    "rounds": 3,
+    "offer_step": 0.04,
+    "history_window": 168,
+    "target_quantile": 0.65,
+    "minimum_history": 12,
+    "peak_weight": 1.0,
+    "ramp_weight": 0.32,
+    "price_weight": 0.1,
+    "carbon_weight": 0.08,
+    "wear_weight": 0.055,
+    "action_deviation_weight": 0.025
+  },
+  "reserve_contract_note": "chesca_reserve_contract_mesh preserves CHESCA's time-varying next-hour minimum SOC as a hard limit on additional discharge offers. It is a protocol constraint, not a cost fitted to evaluation seeds."
+}

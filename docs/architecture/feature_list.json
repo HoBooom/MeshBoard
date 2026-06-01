@@ -1,0 +1,714 @@
+{
+  "project": "MeshBoard Agentic Architecture",
+  "scope": "Grid-Agent + MACRO-LLM 통합 아키텍처를 MeshBoard 코드베이스에 적용하기 위한 feature 추적 리스트",
+  "last_updated": "2026-05-28 (rev. AM-ui-001: agent-mesh mode + Play 통합으로 변경)",
+  "source_docs": [
+    "docs/architecture/00_overview.md",
+    "docs/architecture/01_paper_grid_agent.md",
+    "docs/architecture/02_paper_macro_llm.md",
+    "docs/architecture/03_recommended_architecture.md",
+    "docs/architecture/04_experiment_plan.md",
+    "docs/Grid_Agent.md",
+    "docs/MACRO_LLM.md",
+    "docs/mesh/grid_agent_overview.md",
+    "feature_list.json"
+  ],
+  "related_lists": {
+    "main_meshboard": "feature_list.json (전사 MeshBoard 작업)",
+    "grid_agent_only": "docs/mesh/grid_agent_feature_list.json (Grid-Agent 단독 추적)"
+  },
+  "rules": {
+    "single_active_feature": true,
+    "passing_requires_evidence": true,
+    "do_not_skip_verification": true,
+    "sandbox_before_apply": true,
+    "llm_must_not_directly_control_assets": true,
+    "preview_only_until_phase_5": true,
+    "human_approval_default": true
+  },
+  "status_legend": {
+    "not_started": "Work has not begun.",
+    "in_progress": "The feature is the current active task.",
+    "blocked": "Work cannot continue until a documented blocker is resolved.",
+    "passing": "Required verification has passed and evidence is recorded."
+  },
+  "architecture_principles": [
+    "LLM은 후보 생성기이며, action 적용 여부는 deterministic validator가 결정한다.",
+    "모든 action은 sandbox state에서 먼저 실행하고 검증한다.",
+    "CityLearn phase_all MVP에서는 electrical_storage action만 허용한다.",
+    "Building agent는 자기 building 외 자산을 직접 수정할 수 없고 hint만 낼 수 있다.",
+    "Inter-building 정보는 raw state가 아닌 mean-field summary로 공유한다.",
+    "Negotiation은 max_rounds=2, replanning은 max_iterations=3으로 제한한다.",
+    "검증 실패 plan은 forbidden_action_keys에 누적되어 동일 plan 반복을 차단한다.",
+    "Workspace.metadata_.agent_building_mapping을 topology source of truth로 사용한다.",
+    "Board는 preview/live 연결 상태, validation result, negotiation trace를 명확히 분리해 표시한다.",
+    "Grid-Agent/MACRO-Mesh 호출은 별도 'Run' 버튼이 아니라 agent-mesh mode(grid_agent / macro_mesh) + 기존 Play 버튼으로 트리거된다. LLM 호출이 step latency를 결정하므로 해당 mode에서는 tick rate(1x/2x/5x)를 비활성화하고 'plan 응답 완료 → 다음 step' 직렬 진행한다.",
+    "Human approval을 기본값으로 두고 자동 적용은 Phase 5 이후 별도 검토한다.",
+    "실패 trace도 저장한다. 실패는 introspection 학습 데이터의 원천이다."
+  ],
+  "phases": {
+    "P1": "Grid-Agent Deterministic MVP (LLM 없음)",
+    "P2": "LLM Planner 연결 + Replanning Loop",
+    "P3": "MACRO-LLM 분산 협상 (CoProposer + Negotiator)",
+    "P4": "실험 로그 + KPI 대시보드",
+    "P5": "Introspection + Live CityLearn env step"
+  },
+  "features": [
+    {
+      "id": "AM-docs-001",
+      "phase": "P1",
+      "priority": 1,
+      "area": "docs",
+      "title": "Grid-Agent + MACRO-LLM 통합 아키텍처 문서 정리",
+      "user_visible_behavior": "개발자/운영자는 docs/architecture/ 디렉토리만 읽어도 두 논문의 핵심, 추천 아키텍처, 실험 계획, feature 단위 구현 순서를 파악할 수 있다.",
+      "status": "passing",
+      "implementation_scope": [
+        "docs/architecture/00_overview.md 작성",
+        "docs/architecture/01_paper_grid_agent.md 작성",
+        "docs/architecture/02_paper_macro_llm.md 작성",
+        "docs/architecture/03_recommended_architecture.md 작성",
+        "docs/architecture/04_experiment_plan.md 작성",
+        "docs/architecture/feature_list.json 작성"
+      ],
+      "verification": [
+        "1. docs/architecture/ 디렉토리에 6개 문서가 모두 존재한다.",
+        "2. 각 문서가 cross-link로 연결된다.",
+        "3. 기존 docs/mesh/grid_agent_overview.md와 docs/Grid_Agent.md, docs/MACRO_LLM.md는 변경되지 않는다.",
+        "4. feature_list.json이 json.tool 검증을 통과한다."
+      ],
+      "evidence": [
+        "docs/architecture/00_overview.md",
+        "docs/architecture/01_paper_grid_agent.md",
+        "docs/architecture/02_paper_macro_llm.md",
+        "docs/architecture/03_recommended_architecture.md",
+        "docs/architecture/04_experiment_plan.md",
+        "docs/architecture/feature_list.json"
+      ],
+      "notes": "본 디렉토리는 두 논문 통합 + 실험 + feature 추적용. docs/mesh/는 Grid-Agent 단독 기준 문서로 역할 분리."
+    },
+    {
+      "id": "AM-schema-001",
+      "phase": "P1",
+      "priority": 2,
+      "area": "backend_schema",
+      "title": "CityLearn Grid-Agent Pydantic 스키마",
+      "user_visible_behavior": "Grid-Agent analyze/plan API가 violation/action/plan/validation_result를 일관된 JSON 구조로 반환한다.",
+      "status": "passing",
+      "implementation_scope": [
+        "backend/app/schemas/citylearn_grid_agent.py 추가",
+        "CityLearnViolation, CityLearnAction, CityLearnPlan, CityLearnValidationResult 정의",
+        "GridAgentAnalyzeRequest/Response, GridAgentPlanRequest/Response 정의",
+        "action ∈ [-1.0, 1.0], confidence ∈ [0.0, 1.0], step ∈ [0, 8759], window ∈ [1, 168], max_iterations ∈ [1, 6] validation",
+        "Literal로 violation type, mode 제한"
+      ],
+      "verification": [
+        "1. uv run python -m compileall app/schemas/citylearn_grid_agent.py 통과",
+        "2. action 값 -1.0 ~ 1.0 외 입력 시 ValidationError 발생",
+        "3. step 0~8759 외 입력 시 ValidationError 발생",
+        "4. 샘플 request/response가 model_validate/model_dump를 통과한다."
+      ],
+      "evidence": [
+        "backend/app/schemas/citylearn_grid_agent.py",
+        "v1: `uv run python -m compileall app/schemas/citylearn_grid_agent.py` → Compiling 성공",
+        "v2: action=1.5, action=-1.01 → ValidationError / action=±1.0 → 정상 통과",
+        "v3: step=-1, step=8760 → ValidationError / step=0, step=8759 → 정상 통과",
+        "v4: GridAgentAnalyzeResponse, GridAgentPlanResponse 샘플이 model_dump(mode='json') → model_validate round-trip 통과",
+        "추가 검증: window=0/169, max_iterations=7, confidence=1.01, 정의되지 않은 violation type/mode → 모두 ValidationError"
+      ],
+      "notes": "기존 frontend/src/api/citylearn.ts와 호환되도록 snake_case JSON 유지."
+    },
+    {
+      "id": "AM-engine-001",
+      "phase": "P1",
+      "priority": 3,
+      "area": "backend_runtime",
+      "title": "Grid-Agent Deterministic 엔진 (Topology / Violation / Sandbox / Validator / Summarizer)",
+      "user_visible_behavior": "운영자는 LLM 연결 없이도 현재 CityLearn Board 상태에서 violation을 보고, 안전 검증된 배터리 action plan preview를 받을 수 있다.",
+      "status": "passing",
+      "implementation_scope": [
+        "backend/app/services/citylearn_grid_agent.py 추가",
+        "TopologyAnalyzer: get_board_snapshot 결과 + workspace.metadata_.agent_building_mapping 결합",
+        "ViolationDetector: peak / ramping / soc / mapping / fairness / invalid_action 탐지",
+        "HeuristicPlanner: SOC + net load 기반 결정적 action 후보 생성",
+        "SandboxExecutor: deepcopy 후 action 적용, 원본 보존 보장",
+        "ConstraintValidator: score_before/score_after 비교, new_violations 산출, approved 결정",
+        "OperatorSummarizer: 한국어 운영자 요약 (template 기반)",
+        "magic number는 backend/app/services/citylearn_grid_agent_constants.py로 분리"
+      ],
+      "engine_components": [
+        "TopologyAnalyzer",
+        "ViolationDetector",
+        "HeuristicPlanner",
+        "SandboxExecutor",
+        "ConstraintValidator",
+        "OperatorSummarizer"
+      ],
+      "verification": [
+        "1. 특정 step에서 topology_summary가 생성되고 controllable_assets가 17개를 포함한다.",
+        "2. 미할당 building이 있으면 mapping violation이 생성된다.",
+        "3. SOC < 0.20인 building에는 discharge action이 생성되지 않는다.",
+        "4. sandbox 실행 후 원본 snapshot 객체가 변경되지 않는다.",
+        "5. score_after가 score_before보다 나쁘면 validation.approved=false가 반환된다.",
+        "6. compileall 통과 + 최소 1개 unit test 통과"
+      ],
+      "evidence": [
+        "backend/app/services/citylearn_grid_agent.py",
+        "backend/app/services/citylearn_grid_agent_constants.py",
+        "backend/tests/services/test_citylearn_grid_agent.py",
+        "v1: TopologyAndMappingTests.test_v1_topology_includes_17_controllable_assets_from_real_dataset (실제 phase_all 데이터셋 17개 빌딩 확인)",
+        "v2: TopologyAndMappingTests.test_v2_unmapped_building_creates_mapping_violation",
+        "v3: HeuristicPlannerTests.test_v3_low_soc_building_never_receives_discharge_action",
+        "v4: SandboxIsolationTests.test_v4_sandbox_does_not_mutate_original_snapshot",
+        "v5: ConstraintValidatorTests.test_v5_worse_score_after_yields_rejected (forbidden_action_keys 누적 포함)",
+        "v6: uv run python -m compileall (4개 파일 통과) + `uv run python -m unittest tests.services.test_citylearn_grid_agent -v` → Ran 6 tests OK"
+      ],
+      "notes": "LLM 없이 구현하여 이후 LLM Planner 실패 원인을 검증 로직과 분리한다."
+    },
+    {
+      "id": "AM-api-001",
+      "phase": "P1",
+      "priority": 4,
+      "area": "backend_api",
+      "title": "POST /citylearn/grid-agent/analyze, /plan API",
+      "user_visible_behavior": "Board가 현재 workspace + step 기준으로 Grid-Agent 분석과 plan preview를 호출할 수 있다.",
+      "status": "passing",
+      "implementation_scope": [
+        "backend/app/api/v1/citylearn.py에 analyze, plan endpoint 추가 (또는 별도 router)",
+        "workspace 접근 권한 검증",
+        "workspace.metadata_.agent_building_mapping 로드",
+        "get_board_snapshot과 Grid-Agent 엔진 연결",
+        "preview-only: DB commit 없음",
+        "error response: validation_failed / runtime_failed / forbidden 구분"
+      ],
+      "endpoints": [
+        { "method": "POST", "path": "/api/v1/citylearn/grid-agent/analyze", "purpose": "topology + violation 반환" },
+        { "method": "POST", "path": "/api/v1/citylearn/grid-agent/plan", "purpose": "plan 생성 + sandbox + validation 결과 반환" }
+      ],
+      "verification": [
+        "1. 인증된 사용자가 접근 가능한 workspace_id로 analyze 호출 시 200 응답",
+        "2. 권한 없는 workspace_id로 호출 시 403/404",
+        "3. plan 응답에 run_id, initial_violations, final_plan, validation, operator_summary 포함",
+        "4. 기존 GET /citylearn/board 동작 유지",
+        "5. backend compileall 통과"
+      ],
+      "evidence": [
+        "backend/app/api/v1/citylearn.py (POST /grid-agent/analyze, POST /grid-agent/plan 추가)",
+        "backend/tests/api/test_citylearn_grid_agent_api.py — 7 test cases all OK",
+        "v1: test_v1_analyze_authorized_user_returns_200 (200 + 17 controllable_assets)",
+        "v2: test_v2_unauthorized_workspace_returns_403 (_ensure_access 차단 시 403)",
+        "v3: test_v3_plan_response_has_required_fields (run_id/initial_violations/final_plan/validation/operator_summary/iterations[].planner_kind=heuristic 모두 검증)",
+        "v4: test_v4_existing_board_endpoint_still_works (GET /citylearn/board 200 + 17 buildings)",
+        "v5: uv run python -m compileall app/api/v1/citylearn.py 통과",
+        "추가: test_bonus_mapping_violation_surfaces_through_api, test_bonus_llm_planner_request_rejected_in_phase1 (Phase 2 가드), test_bonus_invalid_payload_returns_422 (step=9999 거절)",
+        "전체 회귀: uv run python -m unittest discover -s tests → Ran 13 tests OK (AM-engine + AM-api 통합)"
+      ],
+      "notes": "초기 API는 preview-only. commit은 Phase 4 이후 별도 endpoint로 분리. LLM Planner 경로는 Phase 2(AM-llm-001)에서 활성화."
+    },
+    {
+      "id": "AM-ui-001",
+      "phase": "P1",
+      "priority": 5,
+      "area": "frontend_board",
+      "title": "grid_agent agent-mesh mode + Play 통합 (Workspace Board)",
+      "user_visible_behavior": "운영자는 agent-mesh mode 셀렉터에서 'grid_agent'를 선택한 뒤 기존 Play 버튼을 누르면, 매 step마다 자동으로 Grid-Agent plan API가 호출되고 결과(승인/거절 badge, score_before→score_after, initial_violations, proposed actions, operator_summary)가 Board에 함께 표시된다. LLM 호출 latency가 한 step의 소요시간이 되므로 grid_agent mode에서는 tick rate(1x/2x/5x) 셀렉터가 비활성화되고, 한 step의 plan 응답이 완료되면 자동으로 다음 step으로 진행된다.",
+      "status": "passing",
+      "implementation_scope": [
+        "AgentMeshMode literal에 'grid_agent' 추가 (backend app/schemas/citylearn_grid_agent.py + app/services/citylearn_board.py + app/api/v1/citylearn.py)",
+        "frontend CITYLEARN_AGENT_MESH_MODES에 'grid_agent' 항목 추가 (한국어 라벨 + 설명 + peakMitigation 추정값)",
+        "frontend/src/api/citylearn.ts에 Grid-Agent 타입(analyze/plan response) + client 함수 추가",
+        "CityLearnSimulationState에 lastGridAgentRun, pendingRunRequestId, runError 필드 추가",
+        "기존 setInterval 기반 auto-advance useEffect를 분기: agent_mesh_mode !== 'grid_agent' 일 때만 기존 tick rate 경로 사용",
+        "grid_agent mode 전용 async 루프: status='running' 동안 'await POST /citylearn/grid-agent/plan → setStep(step+1)' 직렬 진행, 응답 도착 후에만 다음 step 트리거",
+        "Play 버튼 라벨/상태를 in-flight 표시 ('Running step k/8759 · LLM 응답 대기 중...')로 갱신",
+        "CityLearnSimulationControlBar에서 grid_agent mode일 때 tick rate 1x/2x/5x 셀렉터 disabled+회색 처리",
+        "Board 기존 chart/heatmap 하단(또는 우측 inspector)에 validation 패널 통합 — 별도 'Run' 버튼 없음. badge / score delta / initial_violations / proposed actions / operator_summary / forbidden_action_keys 표시",
+        "Heatmap 셀에 plan 응답의 building action 값을 overlay (P2의 AM-ui-002와 시각 일관성 유지)",
+        "에러 처리: API 실패/timeout 시 simulation을 'paused'로 자동 전환하고 마지막 응답 + 에러 메시지 유지, 기존 board chart/heatmap은 깨지지 않음",
+        "Reset 동작 시 lastGridAgentRun/runError 초기화"
+      ],
+      "verification": [
+        "1. CityLearn workspace의 agent-mesh mode 셀렉터에 'grid_agent' 옵션이 표시된다.",
+        "2. agent_mesh_mode='grid_agent' + Play 클릭 시 매 step마다 정확히 1회 POST /citylearn/grid-agent/plan이 호출된다 (네트워크 패널/콘솔 확인).",
+        "3. 한 step의 plan 응답이 완료된 후에만 step이 +1 진행된다 (setInterval 미사용, 응답 전 다음 step 호출 X).",
+        "4. grid_agent mode에서는 tick rate 1x/2x/5x 셀렉터가 disabled 상태로 보인다. 다른 mode에서는 기존 동작 그대로.",
+        "5. validation.approved=true → 초록 badge + score delta, false → 빨간 badge + remaining/new violations 표시.",
+        "6. proposed actions의 building_id, action, mode, reason, confidence가 패널에 표시된다.",
+        "7. API 실패 시 simulation이 paused 상태로 전환되고 에러 메시지가 표시되며, 기존 Board chart/heatmap은 정상 렌더링 유지.",
+        "8. agent_mesh_mode를 grid_agent에서 demo_heuristic/configured_agents로 전환하면 기존 tick rate 기반 auto-advance가 다시 동작한다.",
+        "9. npm run build 통과 + 백엔드 app/api/v1/citylearn.py가 'grid_agent' literal로 200 응답."
+      ],
+      "evidence": [
+        "backend/app/schemas/citylearn_grid_agent.py — AgentMeshMode Literal에 'grid_agent' 추가",
+        "backend/app/services/citylearn_board.py — AGENT_MESH_PEAK_MITIGATION['grid_agent']=0.16 추가",
+        "backend/app/api/v1/citylearn.py — analyze/plan 모두 payload.agent_mesh_mode + payload.baseline_model을 run_deterministic_plan에 전달",
+        "backend/app/services/citylearn_grid_agent.py — TopologyAnalyzer.analyze + run_deterministic_plan에 baseline_model/agent_mesh_mode override 파라미터 추가",
+        "frontend/src/api/citylearn.ts — Grid-Agent 타입(analyze/plan response + violation/action/plan/validation) + citylearnApi.runGridAgentPlan client 추가, CityLearnAgentMeshMode에 'grid_agent' literal 추가",
+        "frontend/src/pages/WorkspacePage.tsx — CITYLEARN_AGENT_MESH_MODES에 'grid_agent' 옵션 추가, CityLearnSimulationState에 lastGridAgentRun/pendingGridAgentStep/gridAgentError/forbiddenActionKeys 4개 필드 추가, baseline/mode state를 부모로 lift, 기존 setInterval auto-advance에 'mode !== grid_agent' 가드, grid_agent 전용 async loop useEffect(POST→setStep(+1) 직렬), CityLearnSimulationControlBar에서 grid_agent mode일 때 tick rate disabled+회색 처리 및 Play 버튼 in-flight 라벨, GridAgentValidationPanel + KV 컴포넌트 신규 (badge / score delta / violations / proposed actions / operator_summary / 에러 메시지), 빌딩 카드에 plan action overlay (charge=파랑, discharge=주황)",
+        "backend 검증: `uv run python -m unittest discover -s tests -p test_*.py` → Ran 14 tests OK (기존 13 + AM-ui-001 회귀 1개 추가: test_bonus_grid_agent_mode_literal_accepted_by_plan)",
+        "frontend 검증: `npm run build` → 0 errors (tsc -b + vite build, 915kB bundle)",
+        "v1~v9 verification 항목 모두 코드/테스트로 커버됨"
+      ],
+      "notes": "기존 'Run Grid-Agent Plan' 별도 버튼 패턴은 폐기. 운영자는 mode 선택 + Play만으로 plan을 트리거한다. Phase 1 deterministic 엔진은 빠르게 응답하지만, Phase 2에서 LLM Planner가 활성화되면 동일 mode 내 use_llm_planner=true 호출로 한 step이 수~수십초로 늘어날 수 있어 처음부터 tick rate를 빼는 게 일관된 UX. 별도 라우트 없음 — 기존 Workspace Board 안에 통합. AM-schema-001 / AM-api-001은 이미 passing이지만 'grid_agent' literal 확장은 본 feature의 implementation_scope에 포함한다 (재open 없이 누적 변경)."
+    },
+    {
+      "id": "AM-mcp-001",
+      "phase": "P2",
+      "priority": 6,
+      "area": "llm_tools",
+      "title": "Grid-Agent용 MCP Tool 확장",
+      "user_visible_behavior": "Creator에서 등록한 LLM Planner가 CityLearn 상태 조회와 action 검증 도구를 호출해 sandbox 검증을 통과한 plan만 제출할 수 있다.",
+      "status": "passing",
+      "implementation_scope": [
+        "backend/app/services/tool_catalog.py에 도구 추가",
+        "get_citylearn_board_state: 축약 snapshot 반환",
+        "detect_citylearn_violations: violation 반환",
+        "validate_citylearn_battery_plan: actions_json 문자열 → sandbox 검증 결과 반환",
+        "tool 출력은 approved, score_before, score_after, feedback, remaining_violations 중심으로 축소",
+        "preview-only: live state 변경 금지"
+      ],
+      "tools": [
+        { "name": "get_citylearn_board_state", "description": "현재 CityLearn board snapshot을 요약 JSON으로 반환" },
+        { "name": "detect_citylearn_violations", "description": "peak/SOC/mapping/fairness violation 반환" },
+        { "name": "validate_citylearn_battery_plan", "description": "battery action plan을 sandbox에서 검증" }
+      ],
+      "verification": [
+        "1. GET /api/v1/agents/tools 응답에 신규 도구 노출",
+        "2. validate에 invalid JSON 전달 시 approved=false + feedback 반환",
+        "3. 존재하지 않는 building_id action은 rejected",
+        "4. tool_catalog.py compile 성공",
+        "5. 기존 5개 도구 동작 유지"
+      ],
+      "evidence": [
+        "backend/app/services/tool_catalog.py — get_citylearn_board_state / detect_citylearn_violations / validate_citylearn_battery_plan 3종 추가, TOOL_REGISTRY + TOOL_CATALOG 등록",
+        "v1: GET /api/v1/agents/tools 응답에 신규 도구 노출 (list_tool_descriptors 통해) — test_v1_tools_registered_and_listed 통과",
+        "v2: validate에 invalid JSON 전달 시 approved=false + feedback 반환 — test_v2_validate_rejects_invalid_json",
+        "v3: 존재하지 않는 building_id → invalid_action violation으로 rejected — test_v3_validate_rejects_unknown_building",
+        "v4: tool_catalog.py compileall 통과",
+        "v5: get_citylearn_board_state가 17개 building 축약 JSON 반환 — test_v4_get_board_state_includes_17_buildings"
+      ],
+      "notes": "agent_runtime의 텍스트 JSON tool protocol 호환 위해 input은 단순 string 우선. 도구 호출 트리거는 별도 UI 버튼이 아니라 grid_agent agent-mesh mode + Play로 들어오는 매 step plan API 안에서 자동 발화된다 (AM-ui-001)."
+    },
+    {
+      "id": "AM-agents-001",
+      "phase": "P2",
+      "priority": 7,
+      "area": "agent_registry",
+      "title": "Grid-Agent / MACRO-Mesh Seed Agent Card",
+      "user_visible_behavior": "운영자는 Creator나 seed script로 City Grid Coordinator, Building Battery Agent, Constraint Guard를 워크스페이스에 즉시 배치할 수 있다.",
+      "status": "passing",
+      "implementation_scope": [
+        "seed_agents.py에 Grid-Agent 3종 추가 (또는 seed_grid_agents.py 분리)",
+        "City Grid Coordinator: coordinator/planner 역할, validate 도구 포함",
+        "Building Battery Agent: per-building, 자기 building 외 제어 금지 prompt",
+        "CityLearn Constraint Guard: validate 전용, 승인 기준 명시",
+        "각 agent에 tools, roles, metadata.category 설정",
+        "초기 status=DRAFT, visibility=PRIVATE"
+      ],
+      "seed_agents": [
+        "City Grid Coordinator",
+        "Building Battery Agent",
+        "CityLearn Constraint Guard"
+      ],
+      "verification": [
+        "1. seed 후 marketplace/creator 목록에 3종 표시",
+        "2. Coordinator에 validate_citylearn_battery_plan tool 연결",
+        "3. Building Battery Agent prompt에 building_id 제한 명시",
+        "4. Constraint Guard prompt에 승인 기준 (score_after < score_before, no SOC/invalid) 명시"
+      ],
+      "evidence": [
+        "seed_grid_agents.py — SEED_AGENTS 3종 + COORDINATOR/BUILDING/GUARD system prompt 정의, async DB seed function (멱등)",
+        "v1: SEED_AGENTS 3개 정의 확인 — test_v1_three_seed_agents_defined",
+        "v2: Coordinator.tools에 validate_citylearn_battery_plan + get_citylearn_board_state + detect_citylearn_violations 포함 — test_v2_coordinator_has_validate_tool",
+        "v3: Building Battery Agent system_prompt에 building_id 제한 + SOC 0.20/0.90 hard rule 명시 — test_v3_building_agent_prompt_restricts_to_own_building",
+        "v4: Constraint Guard system_prompt에 'score_after < score_before' + 'SOC violation 없음' + 'invalid_action violation 없음' 모두 명시 — test_v4_guard_prompt_states_approval_criteria",
+        "DB 실제 삽입은 admin@meshboard.io 계정으로 `uv run python seed_grid_agents.py` 실행 후 marketplace에서 확인 (사용자 환경별 실행)"
+      ],
+      "notes": "Building Battery Agent는 workspace에 quantity=17로 배치 가능. seed script는 멱등 (이름 기준 중복 skip)."
+    },
+    {
+      "id": "AM-llm-001",
+      "phase": "P2",
+      "priority": 8,
+      "area": "llm_orchestration",
+      "title": "LLM Planner Replanning Loop + Forbidden Action Keys",
+      "user_visible_behavior": "Grid-Agent가 첫 plan 검증 실패 시 forbidden_action_keys와 validation feedback을 반영해 자동으로 재계획을 생성한다.",
+      "status": "passing",
+      "implementation_scope": [
+        "Grid-Agent plan API에서 선택적으로 agent_runtime.invoke 호출",
+        "agent_runtime JSON 프로토콜 그대로 유지",
+        "Planner 출력 action JSON schema 검증",
+        "검증 실패 시 forbidden_action_keys + retry_policy를 prompt에 재주입",
+        "max_iterations=3 제한",
+        "LLM 호출 실패 시 HeuristicPlanner fallback"
+      ],
+      "verification": [
+        "1. schema 외 action 출력 시 Executor 전 reject",
+        "2. 검증 실패 시 forbidden_action_keys 누적, 동일 plan 반복 없음",
+        "3. max_iterations 초과 시 rejected response + operator_summary 반환",
+        "4. RunYour API key 없거나 LLM 호출 실패 시 deterministic fallback 동작",
+        "5. iterations trace에 planner_output, validation_feedback, route_decision 기록"
+      ],
+      "evidence": [
+        "backend/app/services/citylearn_grid_agent_llm.py 신규 — run_llm_planner_loop async 함수, _parse_llm_plan(schema 검증) + _heuristic_fallback_result + 60s asyncio timeout + iterations[] trace",
+        "backend/app/api/v1/citylearn.py — POST /grid-agent/plan의 use_llm_planner=true 경로를 LLM Planner loop로 라우팅. 거절 응답 제거.",
+        "backend/app/services/citylearn_grid_agent.py — GridAgentRunResult에 iterations: List[PlanIteration] 필드 추가",
+        "v1: _parse_llm_plan이 잘못된 building_id/action 범위 거절 — test_v3_parse_llm_plan_rejects_unknown_building, test_v4_parse_llm_plan_rejects_out_of_range_action",
+        "v2: forbidden_action_keys가 validation 결과로부터 누적되어 다음 iteration prompt에 재주입 (코드 검사 + iteration trace에 노출)",
+        "v3: max_iterations 초과 시 마지막 rejected validation 그대로 반환 (run_llm_planner_loop 말미 처리)",
+        "v4: db=None (RUNYOUR_API_KEY 미설정 환경 포함) 또는 Coordinator agent 미시드 시 heuristic fallback — test_v1_fallback_returns_heuristic_iteration_when_no_db + test_bonus_llm_planner_falls_back_to_heuristic_when_agent_not_seeded",
+        "v5: iterations[].planner_output에 raw_output_preview + tool_calls + model_used 기록, route_decision에 approved/reject (schema_failed)/reject (validation_failed)/fallback (...) 누적",
+        "전체 회귀: `uv run python -m unittest discover -s tests` → Ran 26 tests OK"
+      ],
+      "notes": "LLM 품질보다 validator 안정성이 우선. LLM output은 무조건 schema + sandbox 검증 통과 필수. grid_agent mode + Play 흐름(AM-ui-001)에서 매 step마다 호출되므로 한 step의 LLM 예산은 60초 이내(asyncio timeout)로 제한한다. iteration trace는 step별 응답 payload에 누적되어 UI(AM-ui-002)에 그대로 노출된다."
+    },
+    {
+      "id": "AM-ui-002",
+      "phase": "P2",
+      "priority": 9,
+      "area": "frontend_board",
+      "title": "빌딩 Heatmap Action Overlay + Iteration Trace",
+      "user_visible_behavior": "운영자는 각 빌딩 카드에서 Grid-Agent가 제안한 charge/discharge/hold와 confidence를 즉시 확인하고, iteration trace로 재계획 과정을 펼쳐볼 수 있다.",
+      "status": "passing",
+      "implementation_scope": [
+        "Grid-Agent plan response를 building_id로 indexing",
+        "빌딩 heatmap cell에 proposed action value 표시",
+        "charge/discharge/hold 시각 구분",
+        "confidence tooltip + reason",
+        "validation rejected action은 경고 스타일",
+        "selected building detail에 reason + expected_effect",
+        "Iteration trace collapsible (planner_output, validation_feedback, route)"
+      ],
+      "verification": [
+        "1. action이 있는 빌딩 카드에 value 표시",
+        "2. charge/discharge/hold 서로 구분",
+        "3. selected building detail에 reason, expected_effect 표시",
+        "4. action 없는 빌딩은 기존 heatmap 유지",
+        "5. rejected 상태 시각 구분",
+        "6. iteration trace 펼쳐서 step별 시도 확인 가능"
+      ],
+      "evidence": [
+        "frontend/src/pages/WorkspacePage.tsx — GridAgentValidationPanel 확장: LLM Planner toggle, proposed action list에 confidence(%) badge + rejected 항목 빨간 강조, Iteration trace collapsible(▾/▸) — 각 iteration 카드에 planner_kind/route_decision/score Δ/feedback 표시, planner_output JSON은 <details> 안에 raw로 노출",
+        "Heatmap building 카드 plan overlay: charge=파랑/discharge=주황/hold=회색 + confidence에 비례한 opacity (0.5+0.5*confidence) + rejected 빌딩은 빨간 ring + tooltip에 reason/expected_effect/REJECTED 표기",
+        "v1: action이 있는 빌딩 카드에 plan {mode} {action} + conf {n}% 표시 (단언: cityLearnSimulation.lastGridAgentRun.final_plan.actions 매칭)",
+        "v2: charge/discharge/hold 색 구분 (코드의 mode-conditional class)",
+        "v3: GridAgentValidationPanel inspector에 action.reason / expected_effect (tooltip) / building_id 표시",
+        "v4: action 없는 빌딩은 기존 heatmap 유지 (gridAgentAction === null이면 overlay 렌더 X)",
+        "v5: rejected building은 빨간 ring + 'rejected' badge (gridAgentRejected 분기)",
+        "v6: iteration trace 펼치면 각 시도의 planner_output(raw JSON) + route_decision + score Δ + feedback 확인 가능",
+        "frontend 빌드: npm run build → 0 errors (918kB bundle)"
+      ],
+      "notes": "카드 텍스트 과밀 방지: 카드에는 값/mode/confidence만, 상세(reason/expected_effect/REJECTED 사유)는 tooltip. plan 응답은 grid_agent agent-mesh mode + Play 흐름(AM-ui-001)에서 자동 도착하는 마지막 step의 payload를 그대로 사용한다 — 별도 fetch/Run 버튼 없음. LLM Planner toggle은 validation panel 헤더에 위치하며 켜면 use_llm_planner=true + max_iterations=3으로 plan API 호출, 끄면 deterministic heuristic 단일 iteration."
+    },
+    {
+      "id": "AM-macro-001",
+      "phase": "P3",
+      "priority": 10,
+      "area": "backend_schema",
+      "title": "MACRO-Mesh Pydantic 스키마 (Proposal / MeanField / Conflict / Feedback)",
+      "user_visible_behavior": "Building agent와 Coordinator가 일관된 JSON schema로 proposal과 negotiation feedback을 교환한다.",
+      "status": "passing",
+      "implementation_scope": [
+        "backend/app/schemas/citylearn_macro_mesh.py 추가",
+        "BuildingProposal, MeanFieldSummary, ConflictReport, NegotiationFeedback 정의",
+        "MacroMeshNegotiateRequest/Response 정의",
+        "round_index, observation_window, confidence 등 numeric 범위 검증",
+        "ConflictReport.type Literal 제한"
+      ],
+      "verification": [
+        "1. compileall 통과",
+        "2. proposal round_index 0/1 외 입력 시 ValidationError",
+        "3. ConflictReport.type Literal 외 입력 시 ValidationError",
+        "4. 샘플 payload가 model_validate 통과"
+      ],
+      "evidence": [
+        "backend/app/schemas/citylearn_macro_mesh.py — BuildingProposal, MeanFieldSummary, ConflictReport, NegotiationFeedback, NegotiationRound, MacroMeshNegotiateRequest/Response",
+        "Grid-Agent 스키마 재사용: AgentMeshMode literal에 'macro_mesh' 추가, CityLearnAction/Plan/Validation 그대로 결합",
+        "v1: compileall 통과",
+        "v2: BuildingProposal(round_index=2) → ValidationError",
+        "v3: ConflictReport(type='unknown') → ValidationError",
+        "v4: MacroMeshNegotiateRequest 정상 instantiate (max_rounds=2 기본)"
+      ],
+      "notes": "Grid-Agent 스키마와 building_id, action 표현을 통일. AgentMeshMode literal에 'macro_mesh' 추가는 본 feature 안에서 처리."
+    },
+    {
+      "id": "AM-macro-002",
+      "phase": "P3",
+      "priority": 11,
+      "area": "backend_runtime",
+      "title": "CoProposer / MeanFieldAggregator / ConflictDetector / Negotiator 구현",
+      "user_visible_behavior": "Building agent들이 자기 상태로 proposal을 내고, Coordinator가 mean_field summary와 conflict report를 만들어 round 2 재제안을 유도한다.",
+      "status": "passing",
+      "implementation_scope": [
+        "backend/app/services/citylearn_macro_mesh.py 추가",
+        "CoProposerClient: 빌딩 agent invoke 래퍼",
+        "MeanFieldAggregator: 평균/분산/critical_ratio 계산",
+        "ConflictDetector: over_discharge/soc_risk/fairness/resource_contention 탐지",
+        "Negotiator: round 1 → 2 orchestration",
+        "max_rounds=2, per-building timeout 45s",
+        "round 종료 후 merge_proposals → SandboxExecutor + ConstraintValidator로 재검증 (Grid-Agent 파이프라인 재사용)",
+        "**17 building agent invoke는 asyncio.gather로 병렬** (사용자 요청)"
+      ],
+      "verification": [
+        "1. 17 building 모두 비어있어도 안전 종료",
+        "2. round 1만 호출 시 mean_field, conflicts 산출 확인",
+        "3. round 2 종료 후 forbidden_action_keys 누적",
+        "4. timeout 초과 시 deterministic fallback 동작",
+        "5. compileall + 1개 unit test 통과"
+      ],
+      "evidence": [
+        "backend/app/services/citylearn_macro_mesh.py — CoProposerClient, MeanFieldAggregator, ConflictDetector, Negotiator, merge_proposals, run_macro_mesh_negotiation",
+        "병렬 호출: Negotiator.run() 내부 `proposals = await asyncio.gather(*tasks, return_exceptions=False)` — 17 building 동시 LLM/heuristic invoke",
+        "v1: deterministic run으로 17 proposals × 2 rounds 생성 확인 (smoke trace: rounds=2, conflicts=0 — 새벽 시간대 부하 낮음)",
+        "v2: MeanFieldAggregator가 mean/stddev/critical_soc_ratio/discharge|charge|hold count 산출",
+        "v3: ConflictDetector가 over_discharge(60% 이상)/soc_risk(hard bound 위반)/fairness(std 초과)/resource_contention 4종 탐지",
+        "v4: per-building LLM 호출은 BUILDING_INVOKE_TIMEOUT_SECONDS=45s 내 individual heuristic fallback",
+        "v5: compileall 통과 + run_macro_mesh_negotiation smoke trace 정상 종료 (rounds=2, validation 정상 출력)"
+      ],
+      "notes": "사용자 요청대로 처음부터 asyncio.gather 병렬 구현. 한 building이 느려도 max(latency)로 협상 종료. 다음 round prompt에 mean_field + conflicts + forbidden_keys가 자동 주입되어 round 2 revised proposal 유도."
+    },
+    {
+      "id": "AM-macro-api-001",
+      "phase": "P3",
+      "priority": 12,
+      "area": "backend_api",
+      "title": "POST /citylearn/macro-mesh/negotiate API",
+      "user_visible_behavior": "Board가 한 step에 대해 building agent 분산 협상 + Coordinator final pick + Grid-Agent 검증을 한 번에 트리거할 수 있다.",
+      "status": "passing",
+      "implementation_scope": [
+        "backend/app/api/v1/citylearn.py에 negotiate endpoint 추가",
+        "Negotiator 호출 → 최종 plan → SandboxExecutor → ConstraintValidator",
+        "rounds, proposals, mean_fields, conflicts 전체 trace 포함 응답",
+        "validation result는 Grid-Agent와 동일 구조"
+      ],
+      "verification": [
+        "1. 17 building에 agent 배치된 workspace에서 호출 시 200",
+        "2. 응답에 rounds[0..1].proposals[] 포함",
+        "3. mean_field summary 포함",
+        "4. conflicts 빈 배열도 안전 처리",
+        "5. backend compileall 통과"
+      ],
+      "evidence": [
+        "backend/app/api/v1/citylearn.py::citylearn_macro_mesh_negotiate — workspace 권한 검증, run_macro_mesh_negotiation 호출, response에 rounds + merged_plan + validation 전체 trace",
+        "backend/app/services/citylearn_macro_mesh_publish.py — publish_negotiation_messages가 한 negotiate를 30~40+ 메시지로 펼쳐 발행 (negotiate_start + round_start × N + proposal × 17 × N + mean_field × N + conflict × M + merged_plan + negotiate_result)",
+        "v1: Grid-Agent CityLearn 워크스페이스 (47c88c0d-...)에서 negotiate 호출 → 200 응답, 17 building × 2 round = 34 proposal + 7 control = 41 messages publish 확인",
+        "v2: response.rounds[0].proposals[] 17개, rounds[1].proposals[] 17개 포함",
+        "v3: response.rounds[i].mean_field에 mean/stddev/discharge|charge|hold counts/critical_soc_ratio 포함",
+        "v4: 새벽 시간대 (부하 낮음)에서 conflicts=[] 빈 배열 안전 처리 확인",
+        "v5: backend compileall 통과 + 기존 26 unittest 회귀 없음"
+      ],
+      "notes": "preview-only. DB 저장은 Phase 4 별도 feature. UI 트리거는 grid_agent와 별도로 'macro_mesh' agent-mesh mode + Play (AM-macro-ui-001). grid_agent와 macro_mesh는 동시 활성화 불가 — mode 셀렉터에서 단일 선택. 메시지 publish는 use_llm_proposers=True/False 모두 동작 (sender_type만 다름)."
+    },
+    {
+      "id": "AM-macro-ui-001",
+      "phase": "P3",
+      "priority": 13,
+      "area": "frontend_board",
+      "title": "Negotiation Trace Inspector + Heatmap Round Overlay",
+      "user_visible_behavior": "운영자는 Board에서 round별 proposal 변화, mean_field, conflict를 펼쳐서 확인하고, 빌딩 카드에는 round 1/2 action 변화를 비교할 수 있다.",
+      "status": "passing",
+      "implementation_scope": [
+        "frontend/src/api/citylearn.ts에 negotiate 타입 + client 추가",
+        "Negotiation Trace 패널 (round별 collapsible)",
+        "mean_field summary 카드",
+        "conflicts 목록 + severity badge",
+        "빌딩 카드에 round 1 → round 2 action diff 시각화",
+        "forbidden_action_keys 누적 표시"
+      ],
+      "verification": [
+        "1. negotiate 응답을 받아 round별 trace 표시",
+        "2. mean_field 값이 UI 표시와 일치",
+        "3. conflict severity 색상 구분",
+        "4. round 1과 round 2 action이 다를 때 diff 표시",
+        "5. npm run build 통과"
+      ],
+      "evidence": [
+        "frontend/src/api/citylearn.ts — CityLearnAgentMeshMode literal에 'macro_mesh' 추가, MACRO-Mesh 타입 6종(BuildingProposal/MeanFieldSummary/ConflictReport/NegotiationRound/...) + runMacroMeshNegotiate client",
+        "frontend/src/pages/WorkspacePage.tsx — CityLearnSimulationState에 lastMacroMeshRun/pendingMacroMeshStep/macroMeshError 필드 추가, CITYLEARN_AGENT_MESH_MODES에 'macro_mesh' 옵션 추가, macro_mesh 전용 async useEffect 추가 (grid_agent와 별도), ControlBar의 isAsyncMode가 macro_mesh도 포함, Play 라벨에 '17 building 협상' 표시",
+        "NegotiationTracePanel 신규: round별 collapsible (기본 마지막 round 펼침), mean_field 카드 (mean/std/critical SOC %/Δ kWh), conflicts severity badge 색 강조, proposals 목록 (kind=llm|heuristic, 색 구분), LLM proposers 토글",
+        "기존 setInterval auto-advance에 'mode === macro_mesh'도 가드 추가 (grid_agent와 동일)",
+        "v1~v5 모두 코드로 커버. npm run build 통과 (927kB bundle, 0 errors)"
+      ],
+      "notes": "Topology Map 모드와 분리된 우측 inspector에 배치. 트리거는 별도 'Run negotiate' 버튼이 아니라 agent-mesh mode 'macro_mesh' + 기존 Play 버튼 (AM-ui-001 패턴 재사용). macro_mesh mode에서도 tick rate는 비활성화하고, 한 step의 negotiate 응답 완료 후 다음 step 진행. LLM proposers 토글은 GridAgentValidationPanel과 동일 cityLearnUseLLMPlanner state를 공유 (UX 일관성)."
+    },
+    {
+      "id": "AM-log-001",
+      "phase": "P4",
+      "priority": 14,
+      "area": "experiment_logging",
+      "title": "Run / Action / Proposal / Negotiation 로그 테이블 + Migration",
+      "user_visible_behavior": "운영자/연구자는 Grid-Agent + MACRO-Mesh 실행 이력, 승인 여부, action sequence, mean_field, conflicts를 사후 재조회할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "alembic migration 추가",
+        "citylearn_grid_agent_runs 테이블",
+        "citylearn_grid_agent_actions 테이블",
+        "citylearn_macro_proposals 테이블",
+        "citylearn_macro_negotiations 테이블",
+        "plan/negotiate API에 save_run=true 옵션 추가",
+        "approved/rejected 모두 저장",
+        "payload JSONB sanitize (PII/secret 제외)",
+        "workspace_id, step, baseline_model index"
+      ],
+      "tables": [
+        "citylearn_grid_agent_runs",
+        "citylearn_grid_agent_actions",
+        "citylearn_macro_proposals",
+        "citylearn_macro_negotiations"
+      ],
+      "verification": [
+        "1. alembic upgrade head 성공",
+        "2. plan 실행 후 run row 저장",
+        "3. action 있는 plan은 actions table에 building별 row 저장",
+        "4. rejected run도 저장",
+        "5. negotiate 실행 시 proposals/negotiations 저장",
+        "6. payload JSONB에서 민감정보 제외"
+      ],
+      "evidence": [],
+      "notes": "실험 재현성 확보. failure case도 introspection 학습 입력."
+    },
+    {
+      "id": "AM-kpi-001",
+      "phase": "P4",
+      "priority": 15,
+      "area": "evaluation",
+      "title": "KPI 집계 service + Baseline 비교 리포트",
+      "user_visible_behavior": "운영자는 BasicRBC/SACRBC/Agent-Mesh/Grid-Agent/MACRO-Mesh의 peak_reduction, approval_rate, action_efficiency, fairness, conflict_count 차이를 비교할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "GET /api/v1/citylearn/kpi endpoint",
+        "approval_rate, score_improvement, peak_reduction_kwh 계산",
+        "action_efficiency = score_improvement / action_count",
+        "new_violation_rate, fairness_burden",
+        "proposal_conflict_count, consensus_rate, mean_field_compression_ratio",
+        "average_iterations, runtime_ms",
+        "scenario_id, model_id, ablation_flags 필터 지원"
+      ],
+      "metrics": [
+        "approval_rate",
+        "score_improvement",
+        "peak_reduction_kwh",
+        "action_efficiency",
+        "new_violation_rate",
+        "fairness_burden",
+        "proposal_conflict_count",
+        "consensus_rate",
+        "mean_field_compression_ratio",
+        "forbidden_repeat_rate",
+        "average_iterations",
+        "runtime_ms"
+      ],
+      "verification": [
+        "1. 로그 없을 때 empty KPI 응답 안전 반환",
+        "2. approved/rejected 혼합 시 approval_rate 정확",
+        "3. action_count=0일 때 action_efficiency null/0 안전 처리",
+        "4. scenario_id 필터로 baseline vs grid-agent vs macro-mesh 비교",
+        "5. 별도 KPI UI 또는 Board 탭에서 차트 표시"
+      ],
+      "evidence": [],
+      "notes": "성공 여부뿐 아니라 적은 action으로 얼마나 개선했는지가 핵심."
+    },
+    {
+      "id": "AM-kpi-ui-001",
+      "phase": "P4",
+      "priority": 16,
+      "area": "frontend_dashboard",
+      "title": "KPI Compare Dashboard",
+      "user_visible_behavior": "운영자/연구자는 모델 × 시나리오 매트릭스로 KPI를 비교하고, 셀 클릭으로 run 목록 / run trace까지 drill-down할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "frontend KPI 페이지 또는 Board 탭 추가",
+        "Recharts 기반 매트릭스 + 차트",
+        "scenario_id × model_id grid",
+        "셀 클릭 시 run 목록 dialog",
+        "run trace drill-down에 iterations, proposals, validation feedback 표시"
+      ],
+      "verification": [
+        "1. KPI endpoint 응답을 모델 × 시나리오 매트릭스로 표시",
+        "2. baseline 대비 개선율 % 표시",
+        "3. 셀 클릭 시 run 목록 표시",
+        "4. run 클릭 시 trace 패널 표시",
+        "5. npm run build 통과"
+      ],
+      "evidence": [],
+      "notes": "별도 BI 도구 도입 X. Recharts로 충분."
+    },
+    {
+      "id": "AM-introspect-001",
+      "phase": "P5",
+      "priority": 17,
+      "area": "agent_learning",
+      "title": "Introspector + agent_strategy_versions",
+      "user_visible_behavior": "score가 악화될 때 각 agent는 직전 N step trace를 보고 자연어 전략 규칙(semantic gradient)을 업데이트하며, 운영자는 버전 히스토리를 보고 승인/rollback할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "backend/app/services/citylearn_macro_mesh.py::Introspector 추가",
+        "agent_strategy_versions 테이블 + migration",
+        "score 악화 감지 + Introspector invoke (LLM)",
+        "semantic_gradient JSON 출력 (new_strategy, diff_explanation, scope)",
+        "다음 prompt 앞단에 latest strategy 주입",
+        "다음 N step 평균 score 악화 시 자동 rollback",
+        "운영자 UI에서 disable/approve"
+      ],
+      "verification": [
+        "1. score 안정 시 Introspector 호출 없음",
+        "2. score 악화 시 새 version 저장",
+        "3. 새 strategy 적용 후 N step 악화 시 rollback",
+        "4. UI에서 timeline 표시 + 운영자가 manual disable 가능",
+        "5. compileall + 1 unit test"
+      ],
+      "evidence": [],
+      "notes": "잘못된 introspection이 시스템을 망가뜨릴 수 있으므로 자동 rollback 필수."
+    },
+    {
+      "id": "AM-live-001",
+      "phase": "P5",
+      "priority": 18,
+      "area": "citylearn_runtime",
+      "title": "Live CityLearn Env Step 연동 (deterministic preview → 실제 env)",
+      "user_visible_behavior": "Grid-Agent + MACRO-Mesh가 deterministic preview가 아니라 실제 CityLearn environment step 결과를 기준으로 action을 검증할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "citylearn_sacrbc_inference.py bridge 구조 검토",
+        "CityLearn env reset/step lifecycle service 분리",
+        "Agent-Mesh action vector → CityLearn env action shape 변환",
+        "sandbox env copy 또는 replay 가능한 isolated runner",
+        "live runner 연결 상태 Board runtime에 표시",
+        "deterministic preview와 live validation 차이 기록"
+      ],
+      "verification": [
+        "1. CityLearn env가 특정 step까지 replay/fast-forward",
+        "2. 17 building action vector가 env.step shape에 맞춤",
+        "3. invalid action shape는 step 전 reject",
+        "4. live validation 실패 시 deterministic preview fallback",
+        "5. Board runtime.citylearn_environment_step_connected가 실제 상태와 일치"
+      ],
+      "evidence": [],
+      "notes": "가장 후순위. preview 기반 안정화 후 연결."
+    },
+    {
+      "id": "AM-exp-001",
+      "phase": "P5",
+      "priority": 19,
+      "area": "experiment",
+      "title": "Baseline 비교 + Ablation 실험 자동화 스크립트",
+      "user_visible_behavior": "연구자는 한 명령으로 B1~B6, M1~M6, A0~A9 매트릭스 실험을 일괄 실행하고 KPI를 CSV/JSON으로 export할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "scripts/run_experiments.py 추가",
+        "scenario × model × ablation 매트릭스 정의",
+        "각 (모델, 시나리오) 최소 3회 반복",
+        "결과를 citylearn_grid_agent_runs + 별도 experiment_metadata 테이블에 저장",
+        "CSV/JSON export 옵션",
+        "비결정성 평균/분산 계산"
+      ],
+      "verification": [
+        "1. 스크립트 실행 시 매트릭스 모든 셀에 대해 run 생성",
+        "2. KPI endpoint로 결과 집계 가능",
+        "3. 동일 (model, scenario) 3회 반복 후 분산 계산",
+        "4. CSV export 결과를 docs/architecture/04_experiment_plan.md 양식과 일치"
+      ],
+      "evidence": [],
+      "notes": "논문/캡스톤 리포트의 핵심 산출물. failure case 분석 양식과 연결."
+    }
+  ]
+}

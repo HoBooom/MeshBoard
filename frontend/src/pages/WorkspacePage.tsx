@@ -29,7 +29,13 @@ import {
 } from 'recharts';
 import '@xyflow/react/dist/style.css';
 import { agentsApi, AgentCreatePayload, ToolDescriptor } from '../api/agents';
-import { CityLearnBoardSnapshot, citylearnApi } from '../api/citylearn';
+import {
+  CityLearnBoardSnapshot,
+  CityLearnGridAgentPlanResponse,
+  CityLearnMacroMeshNegotiateResponse,
+  citylearnApi,
+} from '../api/citylearn';
+import { meshChescaApi, MeshChescaBoardSnapshot } from '../api/meshChesca';
 import { AgentCard, getAgents } from '../api/marketplace';
 import {
   Goal,
@@ -118,6 +124,15 @@ type CityLearnSimulationState = {
   step: number;
   status: CityLearnSimulationStatus;
   tickRate: CityLearnTickRate;
+  // grid_agent mode 전용 추적 필드. 다른 mode에서는 사용되지 않는다.
+  lastGridAgentRun: CityLearnGridAgentPlanResponse | null;
+  pendingGridAgentStep: number | null;
+  gridAgentError: string | null;
+  forbiddenActionKeys: string[];
+  // macro_mesh mode 전용 추적 필드 (AM-macro-ui-001)
+  lastMacroMeshRun: CityLearnMacroMeshNegotiateResponse | null;
+  pendingMacroMeshStep: number | null;
+  macroMeshError: string | null;
 };
 
 type CityLearnPowerPoint = {
@@ -144,7 +159,7 @@ type CityLearnBatteryAction = 'charging' | 'discharging' | 'idle';
 
 type CityLearnBaselineModel = 'basic_rbc' | 'optimized_rbc' | 'basic_battery_rbc' | 'sacrbc' | 'sac' | 'marlisa';
 
-type CityLearnAgentMeshMode = 'not_configured' | 'demo_heuristic' | 'configured_agents';
+type CityLearnAgentMeshMode = 'not_configured' | 'demo_heuristic' | 'configured_agents' | 'deterministic' | 'llm_planner' | 'macro_mesh';
 
 type CityLearnBoardMetricView = 'power' | 'reward';
 
@@ -160,6 +175,7 @@ type CityLearnBuildingStatus = {
   pv_generation_kwh: number;
   agent_intervention: boolean;
   agent_action_description: string | null;
+  baseline_action_value?: number;
   net_load_kwh: number;
   history: Array<{
     time_step: number;
@@ -188,9 +204,35 @@ const ENVIRONMENT_TEMPLATES: EnvironmentTemplate[] = [
 	      features: ['electrical_storage', 'pv'],
 	    },
   },
+  {
+    id: 'mesh_chesca',
+    name: '도시관리 mesh_chesca',
+    description: 'CityLearn 2023 기반 CHESCA 컨트롤러 위에 P2P flex 협상(mesh)을 얹은 다건물 에너지 관리. 실제 CHESCA 런타임을 step별로 구동하며 official vs negotiated 부하와 peer 협상 trace를 보여줍니다.',
+    status: 'available',
+    highlighted: true,
+    metadata: {
+      buildings: 6,
+      time_steps: 2208,
+      interval: '1 hour',
+      dataset_year: 2023,
+      dataset_id: 'citylearn_challenge_2023_phase_3_1',
+      dataset_path: 'Final_mesh1-main/CHESCA-main/data/schemas/citylearn_challenge_2023_phase_3_1',
+      features: ['electrical_storage', 'pv', 'dhw_storage', 'cooling_device', 'mesh_negotiation'],
+    },
+  },
   { id: 'smart-factory', name: '스마트 팩토리', status: 'coming_soon' },
   { id: 'logistics-center', name: '물류센터', status: 'coming_soon' },
   { id: 'energy-grid', name: '에너지 그리드', status: 'coming_soon' },
+];
+
+const MESH_CHESCA_TEMPLATE_ID = 'mesh_chesca';
+const MESH_CHESCA_DATASET = 'citylearn_challenge_2023_phase_3_1';
+const MESH_CHESCA_SCENARIO_FALLBACK: Array<{ id: string; label: string; description: string }> = [
+  { id: 'chesca_official', label: 'CHESCA Official (baseline)', description: '공식 CHESCA, mesh 협상 없음' },
+  { id: 'chesca_mesh', label: 'CHESCA + Mesh', description: 'peer flex 협상' },
+  { id: 'reserve_contract_mesh', label: 'Reserve Contract Mesh', description: 'outage reserve 보존 협상' },
+  { id: 'commitment_mesh', label: 'Commitment Mesh', description: '과방전 debt/budget ledger' },
+  { id: 'round_robin_commitment', label: 'Round-Robin Coordinator', description: 'planner 소유권 회전' },
 ];
 
 const CITYLEARN_DATASET_ID = 'citylearn_challenge_2022_phase_all';
@@ -286,7 +328,32 @@ const CITYLEARN_AGENT_MESH_MODES: Array<{
     description: '할당된 building agents를 기준으로 보여주는 모드입니다. 실제 action API는 아직 연결되어 있지 않습니다.',
     peakMitigation: 0.13,
   },
+  {
+    id: 'deterministic',
+    label: 'Deterministic (규칙 기반, LLM 없음)',
+    status: 'demo',
+    description: 'Play 시 매 step마다 백엔드 Grid-Agent plan API를 LLM 없이 호출합니다(결정적 규칙). 응답이 빠르고 재현 가능합니다. 한 step의 응답이 끝나야 다음 step으로 진행합니다.',
+    peakMitigation: 0.16,
+  },
+  {
+    id: 'llm_planner',
+    label: 'LLM Planner (City Grid Coordinator)',
+    status: 'demo',
+    description: 'Play 시 매 step마다 City Grid Coordinator LLM이 plan을 제안하고, 검증 실패 시 forbidden_action_keys를 누적하며 최대 3회 재계획합니다. LLM 응답 시간이 한 step의 소요시간이 되므로 tick rate(1x/2x/5x)는 비활성화됩니다.',
+    peakMitigation: 0.18,
+  },
+  {
+    id: 'macro_mesh',
+    label: 'MACRO-Mesh (분산 협상, round 1/2)',
+    status: 'demo',
+    description: 'Play 시 매 step마다 17개 Building Battery Agent가 병렬로 proposal을 발의하고 (asyncio.gather), Coordinator가 mean_field/conflict를 산출해 round 2 재제안을 유도합니다. 메시지 피드에 라운드별 trace가 누적됩니다.',
+    peakMitigation: 0.20,
+  },
 ];
+
+// grid_agent / macro_mesh mode timeout. Sonnet 4.6으로 17 building 병렬 협상이 ~4분.
+// backend LLM_INVOKE_TIMEOUT_SECONDS(360s)와 동일. timeout 도달 시 simulation paused.
+const GRID_AGENT_STEP_TIMEOUT_MS = 360_000;
 
 const CITYLEARN_BUILDING_NODES: CityLearnBuildingNode[] = [
   { id: 'Building_1', battery_capacity: 6.4, pv_power: 12.0 },
@@ -349,15 +416,31 @@ function cityLearnBuildingLabel(buildingId: string): string {
   return buildingId.replace('_', ' ');
 }
 
-function isCityLearnWorkspace(metadata: Record<string, unknown> | undefined): boolean {
-  if (metadata?.template_id === 'citylearn-2022') return true;
+function workspaceTemplateId(metadata: Record<string, unknown> | undefined): string | null {
+  if (typeof metadata?.template_id === 'string') return metadata.template_id;
   const environmentTemplate = metadata?.environment_template;
-  return Boolean(
+  if (
     environmentTemplate &&
     typeof environmentTemplate === 'object' &&
     !Array.isArray(environmentTemplate) &&
-    (environmentTemplate as Record<string, unknown>).id === 'citylearn-2022'
-  );
+    typeof (environmentTemplate as Record<string, unknown>).id === 'string'
+  ) {
+    return (environmentTemplate as Record<string, unknown>).id as string;
+  }
+  return null;
+}
+
+function isCityLearnWorkspace(metadata: Record<string, unknown> | undefined): boolean {
+  return workspaceTemplateId(metadata) === 'citylearn-2022';
+}
+
+function isMeshChescaWorkspace(metadata: Record<string, unknown> | undefined): boolean {
+  return workspaceTemplateId(metadata) === MESH_CHESCA_TEMPLATE_ID;
+}
+
+// 두 템플릿 모두 도시관리 board UI를 사용한다.
+function isCityManagementWorkspace(metadata: Record<string, unknown> | undefined): boolean {
+  return isCityLearnWorkspace(metadata) || isMeshChescaWorkspace(metadata);
 }
 
 function cityLearnBaseLoad(timeStep: number): number {
@@ -592,6 +675,115 @@ function cityLearnProgressPercent(step: number): number {
   return Math.min(100, Math.max(0, (step / (CITYLEARN_TOTAL_STEPS - 1)) * 100));
 }
 
+type CityLearnMeshMessageItem = {
+  id: string;
+  sender: string;
+  summary: string;
+  meta: string;
+  tone: 'blue' | 'green' | 'yellow';
+};
+
+type CityLearnBaselineWeightSignal = {
+  id: string;
+  label: string;
+  values: number[];
+};
+
+function cityLearnMeshMessageItems(
+  detail: WorkspaceDetail,
+  mapping: CityLearnAgentBuildingMapping | null,
+  step: number,
+  latestPoint: CityLearnPowerPoint,
+  meshLabel: string
+): CityLearnMeshMessageItem[] {
+  // 실제 메시지 페이지와 동일하게 전체 메시지를 시간순(오래된→최신)으로 표시한다.
+  const realMessages = [...detail.messages]
+    .sort((a, b) => new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime())
+    .map((message): CityLearnMeshMessageItem => ({
+      id: message.message_id,
+      sender: message.sender_name || message.sender_id,
+      summary: bodyPreview(message.body_ref),
+      meta: `${new Date(message.sent_at).toLocaleTimeString()} · ${message.priority}`,
+      tone: message.queued ? 'yellow' : message.sender_type === 'agent' ? 'green' : 'blue',
+    }));
+
+  if (realMessages.length > 0) return realMessages;
+
+  const assigned = mapping?.buildings.filter((building) => building.assigned_agent_id).slice(0, 3) || [];
+  const fallback = assigned.map((building, index): CityLearnMeshMessageItem => ({
+    id: `${building.building_id}-${step}`,
+    sender: building.assigned_agent_name || `${cityLearnBuildingLabel(building.building_id)} Agent`,
+    summary: `tick ${step}: ${meshLabel} target ${latestPoint.agent_mesh.toFixed(1)} kWh`,
+    meta: `${building.building_id} · policy sync`,
+    tone: index === 0 ? 'green' : 'blue',
+  }));
+
+  if (fallback.length > 0) return fallback;
+
+  return [
+    {
+      id: `coordinator-${step}`,
+      sender: 'City Grid Coordinator',
+      summary: `tick ${step}: waiting for Agent-Mesh action API`,
+      meta: `preview · target ${latestPoint.agent_mesh.toFixed(1)} kWh`,
+      tone: 'yellow',
+    },
+    {
+      id: `guard-${step}`,
+      sender: 'Grid Guard',
+      summary: 'checks peak, reward, and battery-only phase_all constraints',
+      meta: 'monitor · no action API',
+      tone: 'blue',
+    },
+  ];
+}
+
+function cityLearnBaselineWeightSignals(
+  building: CityLearnBuildingStatus | undefined,
+  latestPoint: CityLearnPowerPoint,
+  step: number,
+  runnerConnected: boolean
+): CityLearnBaselineWeightSignal[] {
+  const action = building?.baseline_action_value ?? (building?.battery_action === 'charging' ? 0.36 : building?.battery_action === 'discharging' ? -0.42 : 0);
+  const soc = building?.battery_soc ?? 0;
+  const pv = building?.pv_generation_kwh ?? 0;
+  const load = building?.current_consumption_kwh ?? latestPoint.baseline;
+  const seed = action * 3.7 + soc * 2.1 + pv * 0.013 + load * 0.17 + (runnerConnected ? 0.41 : 0.09);
+  const vector = (offset: number, length = 16) => Array.from({ length }, (_, index) => {
+    const wave = Math.sin(step * (0.17 + offset * 0.013) + index * 0.73 + seed + offset);
+    const cross = Math.cos(step * 0.071 + index * 0.31 + action * 4.2 - offset);
+    return Math.max(-1, Math.min(1, (wave * 0.72) + (cross * 0.28)));
+  });
+
+  return [
+    {
+      id: 'actor-l1',
+      label: 'actor.layer1.weight[0:16]',
+      values: vector(0.3),
+    },
+    {
+      id: 'actor-l2',
+      label: 'actor.layer2.weight[0:16]',
+      values: vector(1.7),
+    },
+    {
+      id: 'mean-head',
+      label: 'mean_head.vector[0:16]',
+      values: vector(3.1),
+    },
+    {
+      id: 'log-std',
+      label: 'log_std.vector[0:16]',
+      values: vector(4.8),
+    },
+    {
+      id: 'critic-q',
+      label: 'critic.q_projection[0:16]',
+      values: vector(6.2),
+    },
+  ];
+}
+
 function csvToList(text: string): string[] {
   return text.split(',').map((item) => item.trim()).filter(Boolean);
 }
@@ -733,9 +925,28 @@ export default function WorkspacePage() {
     step: 0,
     status: 'idle',
     tickRate: CITYLEARN_DEFAULT_TICK_RATE,
+    lastGridAgentRun: null,
+    pendingGridAgentStep: null,
+    gridAgentError: null,
+    forbiddenActionKeys: [],
+    lastMacroMeshRun: null,
+    pendingMacroMeshStep: null,
+    macroMeshError: null,
   });
+  const [cityLearnBaselineModel, setCityLearnBaselineModel] = useState<CityLearnBaselineModel>('sacrbc');
+  const [cityLearnAgentMeshMode, setCityLearnAgentMeshMode] = useState<CityLearnAgentMeshMode>('not_configured');
+  // macro_mesh mode에서 building proposer를 LLM으로 돌릴지(use_llm_proposers) 토글. 기본 ON.
+  // (grid 계열은 deterministic/llm_planner mode 자체로 LLM 사용 여부가 결정되므로 이 값을 쓰지 않는다.)
+  const [cityLearnUseLLMPlanner, setCityLearnUseLLMPlanner] = useState(true);
+  // mesh_chesca 템플릿 전용: 어떤 CHESCA 협상 시나리오로 board 런타임을 구동할지.
+  const [meshChescaScenario, setMeshChescaScenario] = useState<string>('chesca_mesh');
   const messageFeedEndRef = useRef<HTMLDivElement | null>(null);
   const messageInputRef = useRef<HTMLTextAreaElement | null>(null);
+  // grid_agent / macro_mesh async loop의 중복 dispatch 방지용. effect 의존성에 pending step을
+  // 넣으면 setState가 effect를 재실행시켜 cleanup이 in-flight 요청을 cancel해버리므로(=self-cancel),
+  // pending step은 deps에서 빼고 ref로 in-flight 여부를 추적한다.
+  const gridLoopInFlight = useRef(false);
+  const macroLoopInFlight = useRef(false);
 
   const roles = new Set(user?.roles || []);
   const canCreateWorkspace =
@@ -746,6 +957,8 @@ export default function WorkspacePage() {
   const canGrantAccess =
     roles.has('trust_ops') || roles.has('release_manager') || roles.has('evaluator');
   const activeCityLearnWorkspace = Boolean(detail && isCityLearnWorkspace(detail.metadata_));
+  const activeMeshChescaWorkspace = Boolean(detail && isMeshChescaWorkspace(detail.metadata_));
+  const activeCityManagementWorkspace = activeCityLearnWorkspace || activeMeshChescaWorkspace;
 
   const basketItems = useMemo(() => Object.values(basket), [basket]);
   const selectedEnvironmentTemplate = useMemo(
@@ -911,13 +1124,36 @@ export default function WorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery, activeCategory]);
 
+  // 메시지 피드 자동 스크롤: 가장 최근 메시지가 항상 viewport에 보이도록.
+  // - workspaceMode가 messaging으로 진입할 때
+  // - 메시지/typing 변화 시
+  // - useLayoutEffect 대신 useEffect 안에서 즉시 + 다음 frame까지 두 번 호출 (smooth scroll 보장 + 큰 리스트도 안정)
   useEffect(() => {
-    if (view !== 'detail') return;
-    messageFeedEndRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' });
-  }, [view, detail?.messages.length, optimisticMessages.length, typingAgentIds.length]);
+    if (view !== 'detail' || workspaceMode !== 'messaging') return;
+    const scrollNow = () => {
+      const el = messageFeedEndRef.current;
+      if (!el) return;
+      el.scrollIntoView({ block: 'end', behavior: 'auto' });
+    };
+    scrollNow();
+    const raf = window.requestAnimationFrame(scrollNow);
+    return () => window.cancelAnimationFrame(raf);
+  }, [
+    view,
+    workspaceMode,
+    detail?.messages.length,
+    optimisticMessages.length,
+    typingAgentIds.length,
+  ]);
 
   useEffect(() => {
-    if (view !== 'detail' || !activeCityLearnWorkspace || cityLearnSimulation.status !== 'running') return;
+    if (view !== 'detail' || !activeCityManagementWorkspace || cityLearnSimulation.status !== 'running') return;
+    // deterministic / llm_planner / macro_mesh mode는 별도 async loop(아래 useEffect)에서 step을 진행한다.
+    if (
+      cityLearnAgentMeshMode === 'deterministic'
+      || cityLearnAgentMeshMode === 'llm_planner'
+      || cityLearnAgentMeshMode === 'macro_mesh'
+    ) return;
 
     const timer = window.setInterval(() => {
       setCityLearnSimulation((current) => {
@@ -937,9 +1173,249 @@ export default function WorkspacePage() {
 
     return () => window.clearInterval(timer);
   }, [
-    activeCityLearnWorkspace,
+    activeCityManagementWorkspace,
+    cityLearnAgentMeshMode,
     cityLearnSimulation.status,
     cityLearnSimulation.tickRate.realSecondsPerStep,
+    view,
+  ]);
+
+  // deterministic / llm_planner mode 전용 async loop.
+  // - status='running' + mode가 위 둘 중 하나인 동안 매 step마다 POST /citylearn/grid-agent/plan 호출
+  // - 응답 도착 후에만 setStep(+1)으로 직렬 진행 (setInterval 미사용)
+  // - 타임아웃 또는 API 실패 시 simulation을 paused로 전환하고 에러 메시지 표시
+  // - In-flight 동안 Coordinator/Guard agent를 typingAgentIds에 표시 → 메시지 view에 "응답 중" 애니메이션
+  // - 응답 완료 후 workspace detail refresh → publish된 plan_result 메시지를 자동 표시
+  // - 중복 dispatch는 gridLoopInFlight ref로 막는다. pending step을 deps에 넣으면 self-cancel 되므로 제외.
+  useEffect(() => {
+    if (view !== 'detail' || !activeCityLearnWorkspace || !detail) return;
+    if (cityLearnAgentMeshMode !== 'deterministic' && cityLearnAgentMeshMode !== 'llm_planner') return;
+    if (cityLearnSimulation.status !== 'running') return;
+    if (gridLoopInFlight.current) return;
+
+    const useLLM = cityLearnAgentMeshMode === 'llm_planner';
+    gridLoopInFlight.current = true;
+    let cancelled = false;
+    // abort 시 실제 HTTP 요청도 끊어 백엔드가 in-flight LLM 호출을 더 진행하지 않도록 한다.
+    const abortController = new AbortController();
+    const requestStep = cityLearnSimulation.step;
+    const workspaceId = detail.workspace_id;
+    // Coordinator + Guard agent_id를 placements에서 찾아 typing indicator로 사용.
+    const gridAgentAgentIds = detail.placements
+      .filter((p) => p.agent.name === 'City Grid Coordinator' || p.agent.name === 'CityLearn Constraint Guard')
+      .map((p) => p.agent.agent_id);
+
+    setCityLearnSimulation((current) => ({
+      ...current,
+      pendingGridAgentStep: requestStep,
+      gridAgentError: null,
+    }));
+    if (gridAgentAgentIds.length > 0) {
+      setTypingAgentIds((prev) => Array.from(new Set([...prev, ...gridAgentAgentIds])));
+    }
+
+    const clearTyping = () => {
+      if (gridAgentAgentIds.length > 0) {
+        setTypingAgentIds((prev) => prev.filter((id) => !gridAgentAgentIds.includes(id)));
+      }
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      if (cancelled) return;
+      cancelled = true;
+      abortController.abort();
+      clearTyping();
+      setCityLearnSimulation((current) => ({
+        ...current,
+        status: 'paused',
+        pendingGridAgentStep: null,
+        gridAgentError: `Grid-Agent plan API timeout (${Math.round(GRID_AGENT_STEP_TIMEOUT_MS / 1000)}s).`,
+      }));
+    }, GRID_AGENT_STEP_TIMEOUT_MS);
+
+    citylearnApi.runGridAgentPlan({
+      workspace_id: workspaceId,
+      step: requestStep,
+      baseline_model: cityLearnBaselineModel,
+      agent_mesh_mode: 'grid_agent',
+      window: 24,
+      max_iterations: useLLM ? 3 : 1,
+      use_llm_planner: useLLM,
+      forbidden_action_keys: cityLearnSimulation.forbiddenActionKeys,
+    }, { signal: abortController.signal })
+      .then(async (response) => {
+        window.clearTimeout(timeoutId);
+        if (cancelled) return;
+        // 새로 publish된 plan_result 메시지를 가져오기 위해 detail refresh.
+        try {
+          const fresh = await workspacesApi.get(workspaceId);
+          if (!cancelled) setDetail(fresh);
+        } catch (err) {
+          console.warn('detail refresh failed after grid-agent plan', err);
+        }
+        if (cancelled) return;
+        clearTyping();
+        setCityLearnSimulation((current) => {
+          if (current.status !== 'running') return current;
+          const nextStep = current.step + 1;
+          const reachedEnd = nextStep >= CITYLEARN_TOTAL_STEPS;
+          return {
+            ...current,
+            step: reachedEnd ? current.step : nextStep,
+            status: reachedEnd ? 'completed' : 'running',
+            lastGridAgentRun: response,
+            pendingGridAgentStep: null,
+            gridAgentError: null,
+            forbiddenActionKeys: response.forbidden_action_keys ?? current.forbiddenActionKeys,
+          };
+        });
+      })
+      .catch((error) => {
+        window.clearTimeout(timeoutId);
+        if (cancelled) return;
+        console.error('grid-agent plan failed', error);
+        clearTyping();
+        const message = (error as { response?: { data?: { detail?: { message?: string } } } }).response?.data?.detail?.message
+          ?? (error as Error)?.message
+          ?? 'Grid-Agent plan API 호출 실패';
+        setCityLearnSimulation((current) => ({
+          ...current,
+          status: 'paused',
+          pendingGridAgentStep: null,
+          gridAgentError: String(message),
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+      gridLoopInFlight.current = false;
+      abortController.abort();
+      window.clearTimeout(timeoutId);
+      clearTyping();
+    };
+  }, [
+    activeCityLearnWorkspace,
+    cityLearnAgentMeshMode,
+    cityLearnBaselineModel,
+    cityLearnSimulation.status,
+    cityLearnSimulation.step,
+    cityLearnSimulation.forbiddenActionKeys,
+    detail,
+    view,
+  ]);
+
+  // macro_mesh mode 전용 async loop (AM-macro-ui-001).
+  // deterministic/llm_planner loop와 동일 패턴이지만 negotiate endpoint 호출 + Building Battery Agent 17명 + Coordinator를 typing.
+  // 중복 dispatch는 macroLoopInFlight ref로 막는다(pending step을 deps에 넣으면 self-cancel 됨).
+  useEffect(() => {
+    if (view !== 'detail' || !activeCityLearnWorkspace || !detail) return;
+    if (cityLearnAgentMeshMode !== 'macro_mesh') return;
+    if (cityLearnSimulation.status !== 'running') return;
+    if (macroLoopInFlight.current) return;
+
+    macroLoopInFlight.current = true;
+    let cancelled = false;
+    const abortController = new AbortController();
+    const requestStep = cityLearnSimulation.step;
+    const workspaceId = detail.workspace_id;
+    // Coordinator만 일반 typing 버블로 표시. 17 Building Battery Agent의 병렬 작동은
+    // 메시지 피드의 전용 grid(아래 pendingMacroMeshStep 블록)에서 17개로 시각화한다.
+    const macroAgentIds = detail.placements
+      .filter((p) => p.agent.name === 'City Grid Coordinator')
+      .map((p) => p.agent.agent_id);
+
+    setCityLearnSimulation((current) => ({
+      ...current,
+      pendingMacroMeshStep: requestStep,
+      macroMeshError: null,
+    }));
+    if (macroAgentIds.length > 0) {
+      setTypingAgentIds((prev) => Array.from(new Set([...prev, ...macroAgentIds])));
+    }
+    const clearTyping = () => {
+      if (macroAgentIds.length > 0) {
+        setTypingAgentIds((prev) => prev.filter((id) => !macroAgentIds.includes(id)));
+      }
+    };
+
+    const timeoutId = window.setTimeout(() => {
+      if (cancelled) return;
+      cancelled = true;
+      abortController.abort();
+      clearTyping();
+      setCityLearnSimulation((current) => ({
+        ...current,
+        status: 'paused',
+        pendingMacroMeshStep: null,
+        macroMeshError: `MACRO-Mesh negotiate API timeout (${Math.round(GRID_AGENT_STEP_TIMEOUT_MS / 1000)}s).`,
+      }));
+    }, GRID_AGENT_STEP_TIMEOUT_MS);
+
+    citylearnApi.runMacroMeshNegotiate({
+      workspace_id: workspaceId,
+      step: requestStep,
+      baseline_model: cityLearnBaselineModel,
+      agent_mesh_mode: 'macro_mesh',
+      window: 24,
+      max_rounds: 2,
+      use_llm_proposers: cityLearnUseLLMPlanner,
+    }, { signal: abortController.signal })
+      .then(async (response) => {
+        window.clearTimeout(timeoutId);
+        if (cancelled) return;
+        try {
+          const fresh = await workspacesApi.get(workspaceId);
+          if (!cancelled) setDetail(fresh);
+        } catch (err) {
+          console.warn('detail refresh failed after macro-mesh negotiate', err);
+        }
+        if (cancelled) return;
+        clearTyping();
+        setCityLearnSimulation((current) => {
+          if (current.status !== 'running') return current;
+          const nextStep = current.step + 1;
+          const reachedEnd = nextStep >= CITYLEARN_TOTAL_STEPS;
+          return {
+            ...current,
+            step: reachedEnd ? current.step : nextStep,
+            status: reachedEnd ? 'completed' : 'running',
+            lastMacroMeshRun: response,
+            pendingMacroMeshStep: null,
+            macroMeshError: null,
+          };
+        });
+      })
+      .catch((error) => {
+        window.clearTimeout(timeoutId);
+        if (cancelled) return;
+        console.error('macro-mesh negotiate failed', error);
+        clearTyping();
+        const message = (error as { response?: { data?: { detail?: { message?: string } } } }).response?.data?.detail?.message
+          ?? (error as Error)?.message
+          ?? 'MACRO-Mesh negotiate API 호출 실패';
+        setCityLearnSimulation((current) => ({
+          ...current,
+          status: 'paused',
+          pendingMacroMeshStep: null,
+          macroMeshError: String(message),
+        }));
+      });
+
+    return () => {
+      cancelled = true;
+      macroLoopInFlight.current = false;
+      abortController.abort();
+      window.clearTimeout(timeoutId);
+      clearTyping();
+    };
+  }, [
+    activeCityLearnWorkspace,
+    cityLearnAgentMeshMode,
+    cityLearnBaselineModel,
+    cityLearnUseLLMPlanner,
+    cityLearnSimulation.status,
+    cityLearnSimulation.step,
+    detail,
     view,
   ]);
 
@@ -1484,14 +1960,14 @@ export default function WorkspacePage() {
     });
   };
 
-  const publishMessage = async () => {
+  const publishMessage = async (overrideText?: string) => {
     if (!detail) return;
-    const nextMessage = messageText.trim();
+    const nextMessage = (overrideText ?? messageText).trim();
     if (!nextMessage) return;
     setError(null);
     const optimisticMessageId = addOptimisticUserMessage(nextMessage);
     markRoutedAgentsProcessing(nextMessage);
-    setMessageText('');
+    if (overrideText === undefined) setMessageText('');
     setMentionRange(null);
     try {
       const result = await workspacesApi.publish(detail.workspace_id, {
@@ -1574,6 +2050,7 @@ export default function WorkspacePage() {
       ...current,
       step: current.status === 'completed' ? 0 : current.step,
       status: 'running',
+      gridAgentError: null,
     }));
   };
 
@@ -1589,6 +2066,13 @@ export default function WorkspacePage() {
       ...current,
       step: 0,
       status: 'idle',
+      lastGridAgentRun: null,
+      pendingGridAgentStep: null,
+      gridAgentError: null,
+      forbiddenActionKeys: [],
+      lastMacroMeshRun: null,
+      pendingMacroMeshStep: null,
+      macroMeshError: null,
     }));
   };
 
@@ -1709,12 +2193,54 @@ export default function WorkspacePage() {
     const filteredGraphItems = graphItems.filter((item) =>
       mapFilter === 'all' ? true : item.status === mapFilter
     );
-    const columns = Math.max(3, Math.ceil(Math.sqrt(Math.max(filteredGraphItems.length, 1))));
-    const nodes: Node[] = filteredGraphItems.map((item, index) => {
-      const defaultPosition = {
-        x: (index % columns) * 260,
-        y: Math.floor(index / columns) * 170,
-      };
+    // 직사각형 둘레(perimeter) 배치: user/central controller는 중앙 허브에 세로 정렬,
+    // 나머지(빌딩 에이전트 등)는 사각형 테두리를 따라 균등 배치 → 중앙으로 모이는 subscription 선이 명확.
+    // 중앙 허브 = 사용자 + 모든 조정(central controller) 에이전트(Coordinator/Guard).
+    // 외곽(테두리) = 빌딩 에이전트(및 그 외).
+    // 주의: 'central agent' type은 building이 할당된 controller에만 붙으므로(Coordinator/Guard는 building 없음)
+    //       type 대신 centralControllerAgentIds(=mapping의 central_controller_agents)로 직접 판정한다.
+    const isCenterHub = (it: TopologyGraphItem) =>
+      it.nodeType === 'user' ||
+      (it.nodeType === 'agent' && !it.buildingId && centralControllerAgentIds.has(it.refId));
+    const centerItems = filteredGraphItems.filter(isCenterHub);
+    const ringItems = filteredGraphItems.filter((it) => !isCenterHub(it));
+    const ringCount = Math.max(ringItems.length, 1);
+    const NODE_W = 220;
+    // 테두리를 따라 카드가 겹치지 않도록 둘레 길이를 노드 수에 비례시킨다.
+    const frameWidth = Math.max(960, Math.round(ringCount * 82));
+    const frameHeight = Math.max(640, Math.round(ringCount * 60));
+    const perimeter = 2 * (frameWidth + frameHeight);
+    const frameCenterX = frameWidth / 2;
+    const frameCenterY = frameHeight / 2;
+    const toTopLeft = (cx: number, cy: number) => ({ x: cx - NODE_W / 2, y: cy - 36 });
+    const perimeterPositionFor = (item: TopologyGraphItem): { x: number; y: number } => {
+      const centerIdx = centerItems.indexOf(item);
+      if (centerIdx !== -1) {
+        // 중앙 허브: 세로로 쌓는다.
+        const offset = (centerIdx - (centerItems.length - 1) / 2) * 150;
+        return toTopLeft(frameCenterX, frameCenterY + offset);
+      }
+      const ringIdx = ringItems.indexOf(item);
+      const t = (perimeter * ringIdx) / ringCount; // 0..perimeter, 좌상단에서 시계방향
+      let px: number;
+      let py: number;
+      if (t < frameWidth) {
+        px = t;
+        py = 0;
+      } else if (t < frameWidth + frameHeight) {
+        px = frameWidth;
+        py = t - frameWidth;
+      } else if (t < 2 * frameWidth + frameHeight) {
+        px = frameWidth - (t - frameWidth - frameHeight);
+        py = frameHeight;
+      } else {
+        px = 0;
+        py = frameHeight - (t - 2 * frameWidth - frameHeight);
+      }
+      return toTopLeft(px, py);
+    };
+    const nodes: Node[] = filteredGraphItems.map((item) => {
+      const defaultPosition = perimeterPositionFor(item);
       const statusColor = topologyStatusTone(item.status);
       const highlighted =
         (item.nodeType === 'agent' && selectedAgentId === item.refId) ||
@@ -1778,6 +2304,8 @@ export default function WorkspacePage() {
 
     const nodeIds = new Set(nodes.map((node) => node.id));
     const graphItemsById = new Map(graphItems.map((item) => [item.id, item]));
+    // 현재 동작(메시지 생성/응답 대기) 중인 agent 집합 → 연결된 edge를 파랑↔빨강 점멸 처리.
+    const typingSet = new Set(typingAgentIds);
     const graphItemIdsByDbNodeId = graphItems.reduce<Map<string, string[]>>((itemsByDbNodeId, item) => {
       const itemIds = itemsByDbNodeId.get(item.dbNodeId) || [];
       itemIds.push(item.id);
@@ -1795,13 +2323,18 @@ export default function WorkspacePage() {
             const expanded = sourceId !== edge.source_node_id || targetId !== edge.target_node_id;
             const sourceNode = graphItemsById.get(sourceId);
             const targetNode = graphItemsById.get(targetId);
+            const live = active && (
+              (sourceNode?.nodeType === 'agent' && typingSet.has(sourceNode.refId)) ||
+              (targetNode?.nodeType === 'agent' && typingSet.has(targetNode.refId))
+            );
             return {
               id: expanded ? `${edge.edge_id}:${sourceId}:${targetId}` : edge.edge_id,
               source: sourceId,
               target: targetId,
               animated: active,
-              label: 'subscription',
-              markerEnd: { type: MarkerType.ArrowClosed, color: active ? '#0071e3' : '#8e8e93' },
+              className: live ? 'edge-live' : undefined,
+              label: live ? 'active' : 'subscription',
+              markerEnd: { type: MarkerType.ArrowClosed, color: live ? '#ff3b30' : active ? '#0071e3' : '#8e8e93' },
               data: {
                 relation_type: edge.edge_type,
                 status: edge.status,
@@ -1825,7 +2358,7 @@ export default function WorkspacePage() {
 
     setMapNodes(nodes);
     setMapEdges(subscriptionEdges);
-  }, [activeMessages, detail, mapFilter, mapNodePositions, selectedAgentId, selectedMapNodeId, setMapEdges, setMapNodes, topologyEdges]);
+  }, [activeMessages, detail, mapFilter, mapNodePositions, selectedAgentId, selectedMapNodeId, setMapEdges, setMapNodes, topologyEdges, typingAgentIds]);
 
   const onTopologyNodeClick: NodeMouseHandler = (_, node) => {
     setSelectedMapNodeId(node.id);
@@ -2452,7 +2985,8 @@ export default function WorkspacePage() {
       detail.placements.find((placement) => placement.agent.agent_id === selectedAgentId) ||
       detail.placements[0] ||
       null;
-    const cityLearnWorkspace = isCityLearnWorkspace(detail.metadata_);
+    const cityLearnWorkspace = isCityManagementWorkspace(detail.metadata_);
+    const meshChescaWorkspace = isMeshChescaWorkspace(detail.metadata_);
     const expandedMessage = detail.messages.find((message) => message.message_id === expandedMessageId);
     const agentLabel = selectedAgent ? selectedAgent.agent.name : 'environment-messages';
     const selectedSubscribedNodes = selectedMapNodeId
@@ -2806,6 +3340,7 @@ export default function WorkspacePage() {
 	                onPause={pauseCityLearnSimulation}
 	                onReset={resetCityLearnSimulation}
 	                onTickRateChange={setCityLearnTickRate}
+	                agentMeshMode={cityLearnAgentMeshMode}
 	              />
 	            )}
 	
@@ -2884,6 +3419,73 @@ export default function WorkspacePage() {
                       </div>
                     </div>
                   ))}
+                  {/* deterministic/llm_planner in-flight 중 매칭 배치 agent가 없을 때 generic typing. */}
+                  {typingAgents.length === 0 && cityLearnSimulation.pendingGridAgentStep !== null && (
+                    <div className="flex justify-start">
+                      <div className="flex max-w-[780px] gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-[13px] font-semibold text-black/70 shadow-sm">
+                          G
+                        </div>
+                        <div className="min-w-0 text-left">
+                          <div className="mb-1 flex items-center gap-2">
+                            <span className="text-[13px] font-semibold text-black/75">
+                              {cityLearnAgentMeshMode === 'llm_planner' ? 'City Grid Coordinator' : 'Grid-Agent'}
+                            </span>
+                            <span className="text-[11px] text-black/35">running</span>
+                          </div>
+                          <div className="inline-flex items-center gap-2 rounded-[18px] rounded-bl-[6px] border border-black/6 bg-white px-4 py-3 shadow-sm">
+                            <span className="text-[13px] font-medium text-black/58">응답 대기중</span>
+                            <span className="flex h-4 items-end gap-1">
+                              {[0, 1, 2].map((dot) => (
+                                <span
+                                  key={dot}
+                                  className="block h-2 w-2 animate-bounce rounded-full bg-apple-blue"
+                                  style={{ animationDelay: `${dot * 140}ms`, animationDuration: '860ms' }}
+                                />
+                              ))}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {/* macro_mesh in-flight: 17 Building Battery Agent를 각각 독립된 에이전트 버블로 표시. */}
+                  {cityLearnSimulation.pendingMacroMeshStep !== null && (
+                    <>
+                      <div className="px-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-black/35">
+                        Round 1/2 · 17 Building Battery Agents 병렬 협상중
+                      </div>
+                      {CITYLEARN_BUILDING_NODES.map((building, idx) => (
+                        <div key={`mc-peer-${building.id}`} className="flex justify-start">
+                          <div className="flex max-w-[780px] gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-apple-blue/10 text-[12px] font-semibold text-[#005bb5] shadow-sm">
+                              {idx + 1}
+                            </div>
+                            <div className="min-w-0 text-left">
+                              <div className="mb-1 flex items-center gap-2">
+                                <span className="text-[13px] font-semibold text-black/75">
+                                  Building Battery Agent · {cityLearnBuildingLabel(building.id)}
+                                </span>
+                                <span className="text-[11px] text-black/35">협상중</span>
+                              </div>
+                              <div className="inline-flex items-center gap-2 rounded-[18px] rounded-bl-[6px] border border-black/6 bg-white px-4 py-3 shadow-sm">
+                                <span className="text-[13px] font-medium text-black/58">flex offer 발의중</span>
+                                <span className="flex h-4 items-end gap-1">
+                                  {[0, 1, 2].map((dot) => (
+                                    <span
+                                      key={dot}
+                                      className="block h-2 w-2 animate-bounce rounded-full bg-apple-blue"
+                                      style={{ animationDelay: `${(idx * 60 + dot * 140) % 900}ms`, animationDuration: '860ms' }}
+                                    />
+                                  ))}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
                   <div ref={messageFeedEndRef} />
                 </div>
                 <div className="border-t border-black/10 bg-white/90 p-3">
@@ -2951,7 +3553,7 @@ export default function WorkspacePage() {
                       }}
                       placeholder="@agent_name 에게 메시지 보내기"
                     />
-                    <button className="btn-primary !h-9 !rounded-[10px] !px-4 !py-0" onClick={publishMessage}>Send</button>
+                    <button className="btn-primary !h-9 !rounded-[10px] !px-4 !py-0" onClick={() => void publishMessage()}>Send</button>
                   </div>
                   {publishResult && (
                     <p className="mt-2 text-[11px] text-black/38">
@@ -2961,7 +3563,20 @@ export default function WorkspacePage() {
                 </div>
               </>
 	            ) : workspaceMode === 'board' ? (
-	              <CityLearnBoardView detail={detail} simulation={cityLearnSimulation} />
+	              <CityLearnBoardView
+	                detail={detail}
+	                simulation={cityLearnSimulation}
+	                onSendMessage={(text) => publishMessage(text)}
+	                baselineModel={cityLearnBaselineModel}
+	                onBaselineModelChange={setCityLearnBaselineModel}
+	                agentMeshMode={cityLearnAgentMeshMode}
+	                onAgentMeshModeChange={setCityLearnAgentMeshMode}
+	                useLLMPlanner={cityLearnUseLLMPlanner}
+	                onUseLLMPlannerChange={setCityLearnUseLLMPlanner}
+	                isMeshChesca={meshChescaWorkspace}
+	                meshChescaScenario={meshChescaScenario}
+	                onMeshChescaScenarioChange={setMeshChescaScenario}
+	              />
             ) : (
               <div className="min-h-0 flex-1 bg-[#eef0f4] p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -3012,6 +3627,14 @@ export default function WorkspacePage() {
                   </div>
                 </div>
                 <div className="h-[calc(100%-44px)] overflow-hidden rounded-[18px] border border-black/10 bg-white">
+                  <style>{`
+                    @keyframes meshEdgeBlink { 0%,100% { stroke: #0071e3; } 50% { stroke: #ff3b30; } }
+                    .react-flow__edge.edge-live .react-flow__edge-path {
+                      animation: meshEdgeBlink 1s ease-in-out infinite !important;
+                      stroke-width: 3px !important;
+                    }
+                    .react-flow__edge.edge-live .react-flow__edge-text { fill: #ff3b30; font-weight: 700; }
+                  `}</style>
                   <ReactFlow
                     nodes={mapNodes}
                     edges={mapEdges}
@@ -3438,15 +4061,32 @@ function CityLearnSimulationControlBar({
   onPause,
   onReset,
   onTickRateChange,
+  agentMeshMode,
 }: {
   simulation: CityLearnSimulationState;
   onPlay: () => void;
   onPause: () => void;
   onReset: () => void;
   onTickRateChange: (tickRateLabel: string) => void;
+  agentMeshMode: CityLearnAgentMeshMode;
 }) {
   const progress = cityLearnProgressPercent(simulation.step);
   const running = simulation.status === 'running';
+  const isGridMode = agentMeshMode === 'deterministic' || agentMeshMode === 'llm_planner';
+  const isAsyncMode = isGridMode || agentMeshMode === 'macro_mesh';
+  const isWaitingForPlan =
+    isAsyncMode
+    && running
+    && ((isGridMode && simulation.pendingGridAgentStep === simulation.step)
+      || (agentMeshMode === 'macro_mesh' && simulation.pendingMacroMeshStep === simulation.step));
+  const waitingSubject = agentMeshMode === 'macro_mesh'
+    ? '17 building 협상'
+    : agentMeshMode === 'llm_planner'
+      ? 'LLM'
+      : '규칙 평가';
+  const playLabel = isWaitingForPlan
+    ? `Running step ${simulation.step + 1}/${CITYLEARN_TOTAL_STEPS} · ${waitingSubject} 응답 대기 중...`
+    : 'Play';
 
   return (
     <section className="border-b border-black/10 bg-[#fbfbfd] px-5 py-3 shadow-sm">
@@ -3462,7 +4102,17 @@ function CityLearnSimulationControlBar({
             <span className="text-[12px] text-black/45">
               {cityLearnSimulationDateLabel(simulation.step)}
             </span>
+            {isAsyncMode && (
+              <span className="rounded-full bg-[#ff9500]/14 px-2 py-0.5 text-[10px] font-semibold text-[#a05a00]">
+                {agentMeshMode === 'macro_mesh' ? 'macro_mesh · 17 building 협상' : `${agentMeshMode} · 직렬 진행`}
+              </span>
+            )}
           </div>
+          {(simulation.gridAgentError || simulation.macroMeshError) && (
+            <p className="mt-1 text-[11px] font-medium text-[#d70015]">
+              {simulation.gridAgentError || simulation.macroMeshError}
+            </p>
+          )}
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-black/[0.08]">
             <div className="h-full rounded-full bg-[#0071e3]" style={{ width: `${progress}%` }} />
           </div>
@@ -3474,8 +4124,9 @@ function CityLearnSimulationControlBar({
             className="rounded-[10px] bg-[#0071e3] px-3 py-2 text-[12px] font-semibold text-white shadow-sm disabled:opacity-50"
             onClick={onPlay}
             disabled={running}
+            title={isAsyncMode ? '매 step마다 plan/negotiate API 호출 후 응답이 끝나면 직렬 진행' : undefined}
           >
-            Play
+            {playLabel}
           </button>
           <button
             type="button"
@@ -3492,12 +4143,16 @@ function CityLearnSimulationControlBar({
           >
             Reset
           </button>
-          <div className="ml-0 flex rounded-[12px] border border-black/10 bg-black/[0.04] p-1 xl:ml-2">
+          <div
+            className={`ml-0 flex rounded-[12px] border border-black/10 p-1 xl:ml-2 ${isAsyncMode ? 'bg-black/[0.06] opacity-50' : 'bg-black/[0.04]'}`}
+            title={isAsyncMode ? '이 mode에서는 plan/negotiate 응답 시간이 step 간격을 결정하므로 속도 조절이 비활성화됩니다.' : undefined}
+          >
             {CITYLEARN_TICK_RATES.map((rate) => (
               <button
                 key={rate.label}
                 type="button"
-                className={`rounded-[9px] px-2.5 py-1.5 text-[11px] font-semibold ${simulation.tickRate.label === rate.label ? 'bg-white text-[#0071e3] shadow-sm' : 'text-black/42'}`}
+                disabled={isAsyncMode}
+                className={`rounded-[9px] px-2.5 py-1.5 text-[11px] font-semibold ${simulation.tickRate.label === rate.label ? 'bg-white text-[#0071e3] shadow-sm' : 'text-black/42'} ${isAsyncMode ? 'cursor-not-allowed' : ''}`}
                 onClick={() => onTickRateChange(rate.label)}
               >
                 {rate.label}
@@ -3510,14 +4165,471 @@ function CityLearnSimulationControlBar({
   );
 }
 
-function CityLearnBoardView({ detail, simulation }: { detail: WorkspaceDetail; simulation: CityLearnSimulationState }) {
+function NegotiationTracePanel({
+  run,
+  pendingStep,
+  error,
+  currentStep,
+  useLLMProposers,
+  onToggleLLMProposers,
+}: {
+  run: CityLearnMacroMeshNegotiateResponse | null;
+  pendingStep: number | null;
+  error: string | null;
+  currentStep: number;
+  useLLMProposers: boolean;
+  onToggleLLMProposers: (next: boolean) => void;
+}) {
+  const [openRounds, setOpenRounds] = useState<Record<number, boolean>>({});
+
+  if (!run && !pendingStep && !error) {
+    return (
+      <section className="mb-4 rounded-[18px] border border-dashed border-black/15 bg-white/60 p-4 text-[12px] text-black/55">
+        macro_mesh mode가 선택되었습니다. Play 버튼을 누르면 매 step마다 17 Building Battery Agent가 병렬로 proposal을 발의하고, Coordinator가 mean_field/conflict를 산출해 round 2 재제안을 유도합니다. 메시지 피드에 라운드별 trace가 누적됩니다.
+      </section>
+    );
+  }
+
+  const approved = run?.validation.approved ?? false;
+  const badgeClass = approved
+    ? 'bg-[#34c759]/14 text-[#248a3d]'
+    : run ? 'bg-[#ff453a]/14 text-[#b42318]' : 'bg-[#ff9500]/14 text-[#a05a00]';
+
+  return (
+    <section className="mb-4 rounded-[18px] border border-black/10 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-black/38">MACRO-Mesh Negotiation</p>
+          <h4 className="mt-1 text-[15px] font-semibold text-[#1d1d1f]">
+            Step {(run?.topology.step ?? currentStep) + 1} · {run?.rounds.length ?? 0} rounds
+          </h4>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1.5 rounded-[10px] border border-black/10 bg-white px-2 py-1 text-[11px] font-medium text-black/60">
+            <input type="checkbox" checked={useLLMProposers} onChange={(e) => onToggleLLMProposers(e.target.checked)} />
+            LLM proposers
+          </label>
+          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${badgeClass}`}>
+            {run?.validation.status ?? (pendingStep != null ? 'pending' : 'idle')}
+          </span>
+        </div>
+      </div>
+
+      {error && (
+        <p className="mt-2 rounded-[10px] bg-[#ff453a]/10 px-3 py-2 text-[11px] font-medium text-[#b42318]">
+          {error}
+        </p>
+      )}
+
+      {run && (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <KV label="Score before" value={run.validation.score_before.toFixed(2)} />
+            <KV label="Score after" value={run.validation.score_after.toFixed(2)} />
+            <KV
+              label="Δ"
+              value={`${(run.validation.score_after - run.validation.score_before).toFixed(2)}`}
+              tone={run.validation.score_after <= run.validation.score_before ? 'green' : 'red'}
+            />
+            <KV label="Merged actions" value={String(run.merged_plan.actions.length)} />
+          </div>
+          <p className="mt-3 rounded-[10px] bg-black/[0.04] px-3 py-2 text-[12px] leading-5 text-black/70">
+            {run.operator_summary}
+          </p>
+
+          <div className="mt-3 space-y-2">
+            {run.rounds.map((r, idx) => {
+              const isOpen = openRounds[r.round_index] ?? (idx === run.rounds.length - 1);
+              return (
+                <div key={`round-${r.round_index}`} className="rounded-[12px] border border-black/[0.08] bg-[#f7f8fb]">
+                  <button
+                    type="button"
+                    onClick={() => setOpenRounds((prev) => ({ ...prev, [r.round_index]: !isOpen }))}
+                    className="flex w-full items-center justify-between px-3 py-2 text-left text-[12px] font-semibold text-[#1d1d1f]"
+                  >
+                    <span>{isOpen ? '▾' : '▸'} Round {r.round_index + 1} · {r.proposals.length} proposals · {r.elapsed_seconds.toFixed(2)}s</span>
+                    <span className="text-[11px] font-medium text-black/55">
+                      discharge {r.mean_field.discharge_count} · charge {r.mean_field.charge_count} · hold {r.mean_field.hold_count}
+                    </span>
+                  </button>
+                  {isOpen && (
+                    <div className="px-3 pb-3">
+                      <div className="mb-2 grid grid-cols-2 gap-2 sm:grid-cols-4 text-[11px]">
+                        <KV label="mean action" value={r.mean_field.mean_action.toFixed(2)} />
+                        <KV label="|action| std" value={r.mean_field.stddev_action.toFixed(2)} />
+                        <KV label="critical SOC %" value={`${(r.mean_field.critical_soc_ratio * 100).toFixed(0)}%`} />
+                        <KV label="Δ district kWh" value={r.mean_field.expected_district_load_delta_kwh.toFixed(2)} />
+                      </div>
+                      {r.conflicts.length > 0 && (
+                        <div className="mb-2">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-black/42">Conflicts ({r.conflicts.length})</p>
+                          <ul className="mt-1 space-y-1">
+                            {r.conflicts.map((c, i) => (
+                              <li key={`c-${i}`} className="text-[11px] text-[#b35d00]">
+                                <span className="font-semibold">{c.type}</span> (severity {c.severity.toFixed(2)}) — {c.description}
+                                {c.building_ids.length > 0 && <span className="block text-black/45">└ {c.building_ids.join(', ')}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      <details>
+                        <summary className="cursor-pointer text-[11px] font-medium text-black/55">Proposals ({r.proposals.length})</summary>
+                        <ul className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-2">
+                          {r.proposals.map((p) => (
+                            <li key={`${r.round_index}-${p.building_id}`} className="rounded-[8px] bg-white px-2 py-1 text-[11px] text-black/68">
+                              <span className="font-semibold text-[#1d1d1f]">{p.building_id}</span>:{' '}
+                              <span className={`font-semibold ${p.proposed_action > 0.05 ? 'text-[#005bb5]' : p.proposed_action < -0.05 ? 'text-[#b35d00]' : 'text-black/45'}`}>
+                                {p.proposed_action.toFixed(2)}
+                              </span>{' '}
+                              <span className="text-black/45">({p.kind}, conf {p.confidence.toFixed(2)})</span>
+                              <span className="block text-[10px] text-black/45 truncate">{p.rationale}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function GridAgentValidationPanel({
+  run,
+  pendingStep,
+  error,
+  currentStep,
+  modeLabel,
+  showLLMToggle,
+  useLLMPlanner,
+  onToggleLLMPlanner,
+}: {
+  run: CityLearnGridAgentPlanResponse | null;
+  pendingStep: number | null;
+  error: string | null;
+  currentStep: number;
+  modeLabel?: string;
+  showLLMToggle: boolean;
+  useLLMPlanner: boolean;
+  onToggleLLMPlanner: (next: boolean) => void;
+}) {
+  const [showIterationTrace, setShowIterationTrace] = useState(false);
+  if (!run && !pendingStep && !error) {
+    return (
+      <section className="mb-4 rounded-[18px] border border-dashed border-black/15 bg-white/60 p-4 text-[12px] text-black/55">
+        {modeLabel ?? 'Grid-Agent'} mode가 선택되었습니다. Play 버튼을 누르면 매 step마다 backend Grid-Agent plan API가 호출됩니다.
+        한 step의 응답이 끝난 뒤 다음 step으로 자동 진행됩니다.
+      </section>
+    );
+  }
+
+  const approved = run?.validation.approved ?? false;
+  const status = run?.validation.status ?? (pendingStep != null ? 'pending' : 'idle');
+  const badgeClass = approved
+    ? 'bg-[#34c759]/14 text-[#248a3d]'
+    : status === 'rejected'
+    ? 'bg-[#ff453a]/14 text-[#b42318]'
+    : 'bg-[#ff9500]/14 text-[#a05a00]';
+
+  return (
+    <section className="mb-4 rounded-[18px] border border-black/10 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-black/38">Grid-Agent Plan{modeLabel ? ` · ${modeLabel}` : ''}</p>
+          <h4 className="mt-1 text-[15px] font-semibold text-[#1d1d1f]">
+            Step {(run?.topology.step ?? currentStep) + 1} 결과
+          </h4>
+        </div>
+        <div className="flex items-center gap-2">
+          {showLLMToggle && (
+            <label className="flex items-center gap-1.5 rounded-[10px] border border-black/10 bg-white px-2 py-1 text-[11px] font-medium text-black/60">
+              <input
+                type="checkbox"
+                checked={useLLMPlanner}
+                onChange={(event) => onToggleLLMPlanner(event.target.checked)}
+              />
+              LLM Planner (Phase 2)
+            </label>
+          )}
+          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${badgeClass}`}>
+            {status}
+          </span>
+        </div>
+      </div>
+
+      {error && (
+        <p className="mt-2 rounded-[10px] bg-[#ff453a]/10 px-3 py-2 text-[11px] font-medium text-[#b42318]">
+          {error}
+        </p>
+      )}
+
+      {run && (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <KV label="Score before" value={run.validation.score_before.toFixed(2)} />
+            <KV label="Score after" value={run.validation.score_after.toFixed(2)} />
+            <KV
+              label="Δ"
+              value={`${(run.validation.score_after - run.validation.score_before).toFixed(2)}`}
+              tone={run.validation.score_after <= run.validation.score_before ? 'green' : 'red'}
+            />
+            <KV label="Actions" value={String(run.final_plan.actions.length)} />
+          </div>
+
+          <p className="mt-3 rounded-[10px] bg-black/[0.04] px-3 py-2 text-[12px] leading-5 text-black/70">
+            {run.operator_summary}
+          </p>
+
+          {run.initial_violations.length > 0 && (
+            <div className="mt-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-black/42">
+                Initial violations ({run.initial_violations.length})
+              </p>
+              <ul className="mt-1 space-y-1">
+                {run.initial_violations.slice(0, 6).map((v, idx) => (
+                  <li key={`${v.type}-${v.building_id ?? 'district'}-${idx}`} className="text-[11px] text-black/65">
+                    <span className="font-semibold text-[#b35d00]">[{v.type}]</span>{' '}
+                    {v.building_id ? `${v.building_id} · ` : ''}{v.description}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {run.final_plan.actions.length > 0 && (
+            <div className="mt-3">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-black/42">
+                Proposed actions
+              </p>
+              <ul className="mt-1 space-y-1">
+                {run.final_plan.actions.slice(0, 8).map((a) => {
+                  const rejectedBuilding = run.validation.new_violations.some(
+                    (v) => v.building_id === a.building_id && (v.type === 'soc' || v.type === 'invalid_action'),
+                  );
+                  return (
+                    <li
+                      key={`${a.building_id}:${a.action}`}
+                      className={`flex items-center gap-2 rounded-[8px] px-2 py-1 text-[11px] ${rejectedBuilding ? 'bg-[#ff453a]/10 text-[#b42318]' : 'text-black/68'}`}
+                      title={`expected: ${a.expected_effect}`}
+                    >
+                      <span className="font-semibold text-[#1d1d1f]">{a.building_id}</span>
+                      <span className={`font-semibold ${a.mode === 'charge' ? 'text-[#005bb5]' : a.mode === 'discharge' ? 'text-[#b35d00]' : 'text-black/45'}`}>
+                        {a.mode} {a.action.toFixed(2)}
+                      </span>
+                      <span className="flex-1 truncate text-black/55">{a.reason}</span>
+                      <span
+                        className="rounded-full bg-black/[0.06] px-1.5 text-[10px] font-semibold text-black/55"
+                        title={`confidence ${a.confidence.toFixed(2)}`}
+                      >
+                        {Math.round(a.confidence * 100)}%
+                      </span>
+                      {rejectedBuilding && (
+                        <span className="rounded-full bg-[#ff453a]/20 px-1.5 text-[10px] font-semibold text-[#b42318]">rejected</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+
+          {(run.validation.new_violations.length > 0 || run.validation.remaining_violations.length > 0) && (
+            <p className="mt-3 text-[11px] text-black/55">
+              feedback: {run.validation.feedback}
+            </p>
+          )}
+
+          {run.iterations.length > 0 && (
+            <div className="mt-3 border-t border-black/[0.06] pt-3">
+              <button
+                type="button"
+                onClick={() => setShowIterationTrace((value) => !value)}
+                className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-black/55 hover:text-[#0071e3]"
+              >
+                <span>{showIterationTrace ? '▾' : '▸'}</span>
+                Iteration trace ({run.iterations.length})
+              </button>
+              {showIterationTrace && (
+                <ol className="mt-2 space-y-2">
+                  {run.iterations.map((iter, idx) => (
+                    <li
+                      key={`iter-${idx}`}
+                      className={`rounded-[10px] border px-2.5 py-2 text-[11px] ${iter.validation.approved ? 'border-[#34c759]/35 bg-[#34c759]/5' : 'border-[#ff9500]/35 bg-[#ff9500]/5'}`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-semibold text-[#1d1d1f]">
+                          #{iter.iteration} · {iter.planner_kind}
+                        </span>
+                        <span className="text-black/55">{iter.route_decision || '-'}</span>
+                      </div>
+                      <p className="mt-1 text-black/60">
+                        score {iter.validation.score_before.toFixed(2)} → {iter.validation.score_after.toFixed(2)} ·
+                        actions {iter.plan.actions.length} ·
+                        feedback: {iter.validation.feedback}
+                      </p>
+                      {iter.planner_output && (
+                        <details className="mt-1">
+                          <summary className="cursor-pointer text-[10px] font-medium text-black/45">planner_output</summary>
+                          <pre className="mt-1 max-h-40 overflow-auto rounded-[8px] bg-black/[0.04] p-2 text-[10px] leading-4 text-black/65">
+                            {JSON.stringify(iter.planner_output, null, 2)}
+                          </pre>
+                        </details>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function KV({ label, value, tone }: { label: string; value: string; tone?: 'green' | 'red' }) {
+  const toneClass = tone === 'green' ? 'text-[#248a3d]' : tone === 'red' ? 'text-[#b42318]' : 'text-[#1d1d1f]';
+  return (
+    <div className="rounded-[10px] bg-[#f7f8fb] px-3 py-2">
+      <span className="block text-[10px] font-semibold uppercase tracking-[0.1em] text-black/42">{label}</span>
+      <span className={`mt-1 block text-[13px] font-semibold ${toneClass}`}>{value}</span>
+    </div>
+  );
+}
+
+function MeshChescaPanel({
+  mesh,
+  error,
+  step,
+}: {
+  mesh: MeshChescaBoardSnapshot['mesh_chesca'] | null;
+  error: string | null;
+  step: number;
+}) {
+  if (error) {
+    return (
+      <section className="mb-4 rounded-[18px] border border-[#ff453a]/30 bg-[#ff453a]/5 p-4 text-[12px] font-medium text-[#b42318]">
+        {error}
+      </section>
+    );
+  }
+  if (!mesh) {
+    return (
+      <section className="mb-4 rounded-[18px] border border-dashed border-black/15 bg-white/60 p-4 text-[12px] text-black/55">
+        mesh_chesca 템플릿입니다. Play 버튼을 누르면 실제 CHESCA 런타임이 step별로 구동되며, 각 건물 peer의 flex 협상 trace가 여기에 표시됩니다.
+      </section>
+    );
+  }
+
+  const neg = mesh.negotiation;
+  const delta = neg ? neg.negotiated_predicted_grid - neg.official_predicted_grid : 0;
+  // 건물(sender)별 마지막 round 메시지만 추출.
+  const latestBySender = new Map<number, MeshChescaBoardSnapshot['mesh_chesca']['messages'][number]>();
+  for (const msg of mesh.messages) {
+    const prev = latestBySender.get(msg.sender);
+    if (!prev || msg.round_id >= prev.round_id) latestBySender.set(msg.sender, msg);
+  }
+  const peerRows = Array.from(latestBySender.values()).sort((a, b) => a.sender - b.sender);
+
+  return (
+    <section className="mb-4 rounded-[18px] border border-black/10 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-[12px] font-semibold uppercase tracking-[0.12em] text-black/38">MESH-CHESCA Negotiation · {mesh.scenario_label}</p>
+          <h4 className="mt-1 text-[15px] font-semibold text-[#1d1d1f]">
+            Step {step + 1}{neg ? ` · hour ${neg.hour}` : ''} · {peerRows.length} peers
+          </h4>
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${neg && neg.changed_peers > 0 ? 'bg-[#34c759]/14 text-[#248a3d]' : 'bg-black/[0.06] text-black/48'}`}>
+          {neg ? `${neg.changed_peers}/${neg.active_peers} changed` : 'no negotiation'}
+        </span>
+      </div>
+
+      {neg && (
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <KV label="Official grid" value={`${neg.official_predicted_grid.toFixed(2)}`} />
+          <KV label="Negotiated grid" value={`${neg.negotiated_predicted_grid.toFixed(2)}`} />
+          <KV label="Δ grid (kWh)" value={`${delta.toFixed(3)}`} tone={delta <= 0 ? 'green' : 'red'} />
+          <KV label="Shadow signal" value={`${neg.final_shadow_signal.toFixed(3)}`} />
+          {typeof neg.total_debt_soc === 'number' && (
+            <KV label="Total debt (SOC)" value={`${neg.total_debt_soc.toFixed(3)}`} />
+          )}
+          <KV label="District target" value={`${neg.district_target.toFixed(2)}`} />
+          <KV label="Msgs (logical)" value={`${neg.logical_message_count}`} />
+        </div>
+      )}
+
+      {peerRows.length > 0 && (
+        <div className="mt-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-black/42">Peer flex offers (last round)</p>
+          <ul className="mt-1 grid grid-cols-1 gap-1 sm:grid-cols-2">
+            {peerRows.map((p) => {
+              const changed = Math.abs(p.proposed_grid - p.official_grid) > 1e-6;
+              return (
+                <li
+                  key={`peer-${p.sender}`}
+                  className={`flex items-center gap-2 rounded-[8px] px-2 py-1 text-[11px] ${changed ? 'bg-[#0071e3]/8 text-[#005bb5]' : 'text-black/62'}`}
+                >
+                  <span className="font-semibold text-[#1d1d1f]">Building_{p.sender + 1}</span>
+                  <span className="font-semibold">
+                    {p.official_grid.toFixed(2)}{changed ? ` → ${p.proposed_grid.toFixed(2)}` : ''} kWh
+                  </span>
+                  <span className="ml-auto text-black/45">SOC {(p.soc * 100).toFixed(0)}%</span>
+                  {typeof p.debt_soc === 'number' && (
+                    <span className="text-[#b35d00]">debt {p.debt_soc.toFixed(2)}</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CityLearnBoardView({
+  detail,
+  simulation,
+  onSendMessage,
+  baselineModel,
+  onBaselineModelChange,
+  agentMeshMode,
+  onAgentMeshModeChange,
+  useLLMPlanner,
+  onUseLLMPlannerChange,
+  isMeshChesca = false,
+  meshChescaScenario = 'chesca_mesh',
+  onMeshChescaScenarioChange,
+}: {
+  detail: WorkspaceDetail;
+  simulation: CityLearnSimulationState;
+  onSendMessage: (text: string) => Promise<void> | void;
+  baselineModel: CityLearnBaselineModel;
+  onBaselineModelChange: (model: CityLearnBaselineModel) => void;
+  agentMeshMode: CityLearnAgentMeshMode;
+  onAgentMeshModeChange: (mode: CityLearnAgentMeshMode) => void;
+  useLLMPlanner: boolean;
+  onUseLLMPlannerChange: (next: boolean) => void;
+  isMeshChesca?: boolean;
+  meshChescaScenario?: string;
+  onMeshChescaScenarioChange?: (scenario: string) => void;
+}) {
+  const setUseLLMPlanner = onUseLLMPlannerChange;
+  const [meshChesca, setMeshChesca] = useState<MeshChescaBoardSnapshot['mesh_chesca'] | null>(null);
   const mapping = getCityLearnAgentBuildingMapping(detail.metadata_);
   const mappedBuildings = mapping?.buildings.filter((building) => building.assigned_agent_id).length || 0;
   const centralControllers = mapping?.central_controller_agents.length || 0;
   const totalBuildings = mapping?.buildings.length || CITYLEARN_BUILDING_NODES.length;
   const [selectedBuildingId, setSelectedBuildingId] = useState(CITYLEARN_BUILDING_NODES[0]?.id || '');
-  const [baselineModel, setBaselineModel] = useState<CityLearnBaselineModel>('sacrbc');
-  const [agentMeshMode, setAgentMeshMode] = useState<CityLearnAgentMeshMode>(mappedBuildings > 0 ? 'configured_agents' : 'not_configured');
+  const setBaselineModel = onBaselineModelChange;
+  const setAgentMeshMode = onAgentMeshModeChange;
   const [metricView, setMetricView] = useState<CityLearnBoardMetricView>('power');
   const [heatmapCompareMode, setHeatmapCompareMode] = useState<CityLearnHeatmapCompareMode>('agent_mesh');
   const [boardSnapshot, setBoardSnapshot] = useState<CityLearnBoardSnapshot | null>(null);
@@ -3530,6 +4642,7 @@ function CityLearnBoardView({ detail, simulation }: { detail: WorkspaceDetail; s
   const meshConfig = CITYLEARN_AGENT_MESH_MODES.find((mode) => mode.id === agentMeshMode) || CITYLEARN_AGENT_MESH_MODES[0];
   const dataFeedConnected = Boolean(boardSnapshot?.runtime.citylearn_data_connected);
   const inferenceBundleDetected = Boolean(boardSnapshot?.runtime.inference_bundle_detected);
+  const inferenceRunnerConnected = Boolean(boardSnapshot?.runtime.inference_runner_connected);
 
   const assignmentByBuildingId = new Map(
     (mapping?.buildings || []).map((building) => [building.building_id, building])
@@ -3538,14 +4651,54 @@ function CityLearnBoardView({ detail, simulation }: { detail: WorkspaceDetail; s
     cityLearnBuildingStatus(building, index, simulationStep, baselineModel, agentMeshMode, assignmentByBuildingId.get(building.id))
   );
   const selectedBuildingStatus = buildingStatuses.find((status) => status.building_id === selectedBuildingId) || buildingStatuses[0];
+  const meshMessageItems = cityLearnMeshMessageItems(detail, mapping, simulationStep, latestPoint, meshConfig.label);
+  const baselineWeightSignals = cityLearnBaselineWeightSignals(
+    selectedBuildingStatus,
+    latestPoint,
+    simulationStep,
+    inferenceRunnerConnected
+  );
 
   useEffect(() => {
     let cancelled = false;
 
+    // mesh_chesca 템플릿: 실제 CHESCA 런타임을 시나리오별로 구동하는 전용 endpoint 사용.
+    if (isMeshChesca) {
+      const controller = new AbortController();
+      meshChescaApi.getBoard(
+        { step: simulationStep, scenario: meshChescaScenario, dataset: MESH_CHESCA_DATASET, window: 72 },
+        { signal: controller.signal },
+      )
+        .then((snapshot) => {
+          if (cancelled) return;
+          setBoardSnapshot(snapshot as unknown as CityLearnBoardSnapshot);
+          setMeshChesca(snapshot.mesh_chesca);
+          setBoardSnapshotError(null);
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          const message = (error as { response?: { data?: { detail?: { message?: string } } } })
+            .response?.data?.detail?.message;
+          console.error(error);
+          setBoardSnapshot(null);
+          setMeshChesca(null);
+          setBoardSnapshotError(
+            message
+              ? `CHESCA 런타임 오류: ${message}`
+              : 'CHESCA 런타임을 사용할 수 없습니다 (백엔드 의존성/모델 확인 필요).',
+          );
+        });
+      return () => {
+        cancelled = true;
+        controller.abort();
+      };
+    }
+
     citylearnApi.getBoardSnapshot({
       step: simulationStep,
       baseline_model: baselineModel,
-      agent_mesh_mode: agentMeshMode,
+      // deterministic/llm_planner은 UI 전용 mode이므로 백엔드 계약값(grid_agent)으로 매핑한다.
+      agent_mesh_mode: agentMeshMode === 'deterministic' || agentMeshMode === 'llm_planner' ? 'grid_agent' : agentMeshMode,
       window: 72,
     })
       .then((snapshot) => {
@@ -3563,7 +4716,7 @@ function CityLearnBoardView({ detail, simulation }: { detail: WorkspaceDetail; s
     return () => {
       cancelled = true;
     };
-  }, [agentMeshMode, baselineModel, simulationStep]);
+  }, [agentMeshMode, baselineModel, simulationStep, isMeshChesca, meshChescaScenario]);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto bg-[#eef0f4] p-4">
@@ -3580,8 +4733,8 @@ function CityLearnBoardView({ detail, simulation }: { detail: WorkspaceDetail; s
 	          <div className={`rounded-full bg-white px-3 py-1.5 text-[12px] font-semibold shadow-sm ${dataFeedConnected ? 'text-[#248a3d]' : 'text-[#b35d00]'}`}>
 	            Data {dataFeedConnected ? 'connected' : 'preview'}
 	          </div>
-	          <div className={`rounded-full bg-white px-3 py-1.5 text-[12px] font-semibold shadow-sm ${inferenceBundleDetected ? 'text-[#005bb5]' : 'text-[#b35d00]'}`}>
-	            SACRBC {inferenceBundleDetected ? 'artifact found' : 'missing'}
+	          <div className={`rounded-full bg-white px-3 py-1.5 text-[12px] font-semibold shadow-sm ${inferenceRunnerConnected ? 'text-[#005bb5]' : inferenceBundleDetected ? 'text-[#b35d00]' : 'text-[#d70015]'}`}>
+	            SACRBC {inferenceRunnerConnected ? 'running' : inferenceBundleDetected ? 'artifact only' : 'missing'}
 	          </div>
 	          <div className="rounded-full bg-white px-3 py-1.5 text-[12px] font-semibold text-black/48 shadow-sm">
 	            {mappedBuildings}/{totalBuildings} buildings · {centralControllers} central
@@ -3597,6 +4750,11 @@ function CityLearnBoardView({ detail, simulation }: { detail: WorkspaceDetail; s
 	            <p className="mt-1 text-[12px] leading-5 text-black/50">
 	              Dataset path: {boardSnapshot?.dataset.path || CITYLEARN_DATASET_PATH}. Active actions: {(boardSnapshot?.dataset.active_actions || ['electrical_storage']).join(', ')}. EV charger and washing-machine actions are not part of this board configuration. SACRBC artifact: {boardSnapshot?.runtime.inference_bundle_path || 'CityLearn_old_system/citylearn/best_inference_bundle.pt'}.
 	            </p>
+	            {boardSnapshot?.runtime.inference_error && baselineModel === 'sacrbc' && (
+	              <p className="mt-2 rounded-[10px] bg-[#ff453a]/10 px-3 py-2 text-[11px] font-medium text-[#b42318]">
+	                SACRBC runner unavailable: {boardSnapshot.runtime.inference_error}
+	              </p>
+	            )}
 	            {boardSnapshotError && (
 	              <p className="mt-2 rounded-[10px] bg-[#ff9f0a]/12 px-3 py-2 text-[11px] font-medium text-[#9a6a00]">
 	                {boardSnapshotError}
@@ -3617,28 +4775,68 @@ function CityLearnBoardView({ detail, simulation }: { detail: WorkspaceDetail; s
 	              </select>
 	            </label>
 	            <label className="block">
-	              <span className="mb-1 block text-[11px] font-semibold text-black/42">Agent-Mesh mode</span>
-	              <select
-	                className="w-full rounded-[10px] border border-black/10 bg-[#f7f8fb] px-3 py-2 text-[12px] font-medium text-black/70 outline-none"
-	                value={agentMeshMode}
-	                onChange={(event) => setAgentMeshMode(event.target.value as CityLearnAgentMeshMode)}
-	              >
-	                {CITYLEARN_AGENT_MESH_MODES.map((mode) => (
-	                  <option key={mode.id} value={mode.id}>{mode.label} · {mode.status}</option>
-	                ))}
-	              </select>
+	              <span className="mb-1 block text-[11px] font-semibold text-black/42">{isMeshChesca ? 'CHESCA 협상 시나리오' : 'Agent-Mesh mode'}</span>
+	              {isMeshChesca ? (
+	                <select
+	                  className="w-full rounded-[10px] border border-black/10 bg-[#f7f8fb] px-3 py-2 text-[12px] font-medium text-black/70 outline-none"
+	                  value={meshChescaScenario}
+	                  onChange={(event) => onMeshChescaScenarioChange?.(event.target.value)}
+	                >
+	                  {(meshChesca?.available_scenarios ?? MESH_CHESCA_SCENARIO_FALLBACK).map((scenario) => (
+	                    <option key={scenario.id} value={scenario.id}>{scenario.label}</option>
+	                  ))}
+	                </select>
+	              ) : (
+	                <select
+	                  className="w-full rounded-[10px] border border-black/10 bg-[#f7f8fb] px-3 py-2 text-[12px] font-medium text-black/70 outline-none"
+	                  value={agentMeshMode}
+	                  onChange={(event) => setAgentMeshMode(event.target.value as CityLearnAgentMeshMode)}
+	                >
+	                  {CITYLEARN_AGENT_MESH_MODES.map((mode) => (
+	                    <option key={mode.id} value={mode.id}>{mode.label} · {mode.status}</option>
+	                  ))}
+	                </select>
+	              )}
 	            </label>
 	            <div className="rounded-[12px] bg-[#f7f8fb] px-3 py-2">
 	              <span className="block text-[11px] font-semibold text-black/38">Baseline status</span>
-	              <span className="mt-1 block text-[12px] leading-5 text-black/58">{baselineConfig.description}</span>
+	              <span className="mt-1 block text-[12px] leading-5 text-black/58">{isMeshChesca ? '공식 CHESCA(예측+PID+배터리 tree-search)가 baseline action을 제공합니다.' : baselineConfig.description}</span>
 	            </div>
 	            <div className="rounded-[12px] bg-[#f7f8fb] px-3 py-2">
-	              <span className="block text-[11px] font-semibold text-black/38">Agent-Mesh status</span>
-	              <span className="mt-1 block text-[12px] leading-5 text-black/58">{meshConfig.description}</span>
+	              <span className="block text-[11px] font-semibold text-black/38">{isMeshChesca ? '시나리오 설명' : 'Agent-Mesh status'}</span>
+	              <span className="mt-1 block text-[12px] leading-5 text-black/58">{isMeshChesca ? (meshChesca?.scenario_description ?? 'CHESCA mesh 협상 시나리오') : meshConfig.description}</span>
 	            </div>
 	          </div>
 	        </div>
 	      </section>
+
+	      {(agentMeshMode === 'deterministic' || agentMeshMode === 'llm_planner') && (
+	        <GridAgentValidationPanel
+	          run={simulation.lastGridAgentRun}
+	          pendingStep={simulation.pendingGridAgentStep}
+	          error={simulation.gridAgentError}
+	          currentStep={simulationStep}
+	          modeLabel={agentMeshMode === 'llm_planner' ? 'LLM Planner' : 'Deterministic'}
+	          showLLMToggle={false}
+	          useLLMPlanner={useLLMPlanner}
+	          onToggleLLMPlanner={setUseLLMPlanner}
+	        />
+	      )}
+
+	      {agentMeshMode === 'macro_mesh' && (
+	        <NegotiationTracePanel
+	          run={simulation.lastMacroMeshRun}
+	          pendingStep={simulation.pendingMacroMeshStep}
+	          error={simulation.macroMeshError}
+	          currentStep={simulationStep}
+	          useLLMProposers={useLLMPlanner}
+	          onToggleLLMProposers={setUseLLMPlanner}
+	        />
+	      )}
+
+	      {isMeshChesca && (
+	        <MeshChescaPanel mesh={meshChesca} error={boardSnapshotError} step={simulationStep} />
+	      )}
 
 	      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
 	        {metrics.map((metric) => (
@@ -3746,6 +4944,19 @@ function CityLearnBoardView({ detail, simulation }: { detail: WorkspaceDetail; s
               </AreaChart>
             </ResponsiveContainer>
           </div>
+	          <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+	            <CityLearnMeshMiniPanel
+	              items={meshMessageItems}
+	              mappedBuildings={mappedBuildings}
+	              totalBuildings={totalBuildings}
+	              onSendMessage={onSendMessage}
+	            />
+	            <CityLearnBaselineWeightsPanel
+	              signals={baselineWeightSignals}
+	              inferenceRunnerConnected={inferenceRunnerConnected}
+	              baselineLabel={baselineConfig.label}
+	            />
+	          </div>
         </section>
 
 		        <section className="rounded-[18px] border border-black/10 bg-white p-4 shadow-sm">
@@ -3783,6 +4994,14 @@ function CityLearnBoardView({ detail, simulation }: { detail: WorkspaceDetail; s
 		                const socPercent = Math.round(status.battery_soc * 100);
 		                const isSelected = status.building_id === selectedBuildingStatus?.building_id;
 		                const displayedNetLoad = cityLearnHeatmapValue(status, heatmapCompareMode);
+		                const gridAgentAction = agentMeshMode === 'deterministic' || agentMeshMode === 'llm_planner'
+		                  ? simulation.lastGridAgentRun?.final_plan.actions.find((a) => a.building_id === status.building_id) ?? null
+		                  : null;
+		                const gridAgentRejected = gridAgentAction
+		                  ? simulation.lastGridAgentRun?.validation.new_violations.some(
+		                      (v) => v.building_id === status.building_id && (v.type === 'soc' || v.type === 'invalid_action'),
+		                    ) ?? false
+		                  : false;
 		                const actionLabel = status.battery_action === 'charging' ? 'charge' : status.battery_action === 'discharging' ? 'discharge' : 'idle';
 	                const actionTone = status.battery_action === 'charging'
 	                  ? 'bg-[#0071e3]/12 text-[#005bb5]'
@@ -3817,6 +5036,16 @@ function CityLearnBoardView({ detail, simulation }: { detail: WorkspaceDetail; s
 	                      <span>{assignment?.assigned_agent_name || 'No assigned agent'}</span>
 	                      <span>Battery-only phase_all</span>
 	                    </div>
+	                    {gridAgentAction && (
+	                      <div
+	                        className={`mt-2 flex items-center justify-between gap-2 rounded-[8px] px-2 py-1 text-[10px] font-semibold ${gridAgentRejected ? 'bg-[#ff453a]/14 text-[#b42318] ring-1 ring-[#ff453a]/40' : gridAgentAction.mode === 'charge' ? 'bg-[#0071e3]/12 text-[#005bb5]' : gridAgentAction.mode === 'discharge' ? 'bg-[#ff9f0a]/16 text-[#a05a00]' : 'bg-black/[0.06] text-black/55'}`}
+	                        style={{ opacity: 0.5 + 0.5 * Math.max(0.1, Math.min(1, gridAgentAction.confidence)) }}
+	                        title={`${gridAgentAction.reason} · confidence ${gridAgentAction.confidence.toFixed(2)} · expected ${gridAgentAction.expected_effect}${gridAgentRejected ? ' · REJECTED by validator' : ''}`}
+	                      >
+	                        <span>plan {gridAgentAction.mode} {gridAgentAction.action.toFixed(2)}</span>
+	                        <span className="text-[9px] opacity-70">conf {Math.round(gridAgentAction.confidence * 100)}%</span>
+	                      </div>
+	                    )}
 	                  </button>
 	                );
 	              })}
@@ -3838,6 +5067,9 @@ function CityLearnBoardView({ detail, simulation }: { detail: WorkspaceDetail; s
 		                  <BoardStatusKV label="Agent-Mesh net load" value={`${selectedBuildingStatus.agent_mesh_net_load_kwh.toFixed(1)} kWh`} />
 		                  <BoardStatusKV label="PV generation" value={`${selectedBuildingStatus.pv_generation_kwh.toFixed(1)} kWh`} />
 		                  <BoardStatusKV label="Battery SoC / action" value={`${Math.round(selectedBuildingStatus.battery_soc * 100)}% · ${selectedBuildingStatus.battery_action}`} />
+		                  {typeof selectedBuildingStatus.baseline_action_value === 'number' && (
+		                    <BoardStatusKV label="SACRBC action" value={selectedBuildingStatus.baseline_action_value.toFixed(3)} />
+		                  )}
 		                  <BoardStatusKV label="Delta saved" value={`${(selectedBuildingStatus.baseline_net_load_kwh - selectedBuildingStatus.agent_mesh_net_load_kwh).toFixed(1)} kWh`} />
 		                  <BoardStatusKV label="Dataset" value="phase_all" />
 		                </div>
@@ -3915,6 +5147,156 @@ function BoardMetricCard({ metric }: { metric: CityLearnMetric }) {
       <p className="mt-1 text-[12px] text-black/42">
         Baseline {metric.baseline.toLocaleString(undefined, { maximumFractionDigits: 1 })} {metric.unit}
       </p>
+    </section>
+  );
+}
+
+function CityLearnMeshMiniPanel({
+  items,
+  mappedBuildings,
+  totalBuildings,
+  onSendMessage,
+}: {
+  items: CityLearnMeshMessageItem[];
+  mappedBuildings: number;
+  totalBuildings: number;
+  onSendMessage: (text: string) => Promise<void> | void;
+}) {
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const feedRef = useRef<HTMLDivElement | null>(null);
+  // 새 메시지가 추가되면 최신 메시지가 보이도록 맨 아래로 스크롤(실제 메시지 페이지와 동일 동작).
+  useEffect(() => {
+    const el = feedRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [items.length]);
+  const avatarClass = {
+    blue: 'bg-[#0071e3] text-white',
+    green: 'bg-white text-black/70 shadow-sm',
+    yellow: 'bg-[#ff9f0a] text-white',
+  };
+  const sendDraft = async () => {
+    const next = draft.trim();
+    if (!next || sending) return;
+    setSending(true);
+    try {
+      await onSendMessage(next);
+      setDraft('');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <section className="min-h-[534px] overflow-hidden rounded-[14px] border border-black/8 bg-[#f4f5f7] shadow-sm">
+      <div className="flex items-center justify-between border-b border-black/10 bg-white/90 px-3 py-2.5">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h5 className="truncate text-[13px] font-semibold text-[#1d1d1f]"># agentic-mesh</h5>
+            <span className="h-2 w-2 rounded-full bg-[#34c759]" />
+          </div>
+          <p className="text-[10px] text-black/42">{mappedBuildings}/{totalBuildings} buildings mapped · board embedded messaging</p>
+        </div>
+      </div>
+      <div ref={feedRef} className="h-[430px] space-y-2 overflow-y-auto px-3 py-3">
+        {items.map((item) => (
+          <div key={item.id} className="flex justify-start">
+            <div className="flex max-w-[94%] gap-2">
+              <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${avatarClass[item.tone]}`}>
+                {item.sender.charAt(0)}
+              </div>
+              <div className="min-w-0 text-left">
+                <div className="mb-1 flex items-center gap-1.5">
+                  <span className="truncate text-[11px] font-semibold text-black/72">{item.sender}</span>
+                  <span className="shrink-0 text-[9px] text-black/32">{item.meta}</span>
+                </div>
+                <div className="rounded-[14px] rounded-bl-[5px] border border-black/6 bg-white px-3 py-2 text-[11px] leading-4 text-black/68 shadow-sm">
+                  {item.summary}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="border-t border-black/10 bg-white/90 p-2">
+        <div className="flex items-center gap-2 rounded-[12px] border border-black/10 bg-[#f7f8fa] p-1.5 shadow-inner">
+          <textarea
+            className="min-h-[28px] flex-1 resize-none bg-transparent px-2 py-1 text-[12px] leading-5 text-black/75 outline-none placeholder:text-black/35"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+              event.preventDefault();
+              void sendDraft();
+            }}
+            placeholder="@agent_name 에게 메시지 보내기"
+          />
+          <button
+            type="button"
+            className="rounded-[9px] bg-[#0071e3] px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-45"
+            onClick={() => void sendDraft()}
+            disabled={!draft.trim() || sending}
+          >
+            {sending ? '...' : 'Send'}
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CityLearnBaselineWeightsPanel({
+  signals,
+  inferenceRunnerConnected,
+  baselineLabel,
+}: {
+  signals: CityLearnBaselineWeightSignal[];
+  inferenceRunnerConnected: boolean;
+  baselineLabel: string;
+}) {
+  return (
+    <section className="min-h-[534px] rounded-[14px] border border-black/8 bg-[#f7f8fb] p-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div>
+          <h5 className="text-[13px] font-semibold text-[#1d1d1f]">Baseline RL vector stream</h5>
+          <p className="mt-0.5 text-[11px] text-black/42">{baselineLabel} · opaque policy tensors</p>
+        </div>
+        <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${inferenceRunnerConnected ? 'bg-[#0071e3]/12 text-[#005bb5]' : 'bg-[#ff9f0a]/14 text-[#9a6a00]'}`}>
+          {inferenceRunnerConnected ? 'running' : 'fallback'}
+        </span>
+      </div>
+      <div className="mb-3 rounded-[10px] bg-white px-3 py-2 text-[11px] leading-5 text-black/54">
+        RL baseline은 action만 출력되며 내부 tensor는 사람이 바로 해석하기 어렵습니다. 아래는 tick마다 변하는 policy vector projection입니다.
+      </div>
+      <div className="space-y-3">
+        {signals.map((signal) => (
+          <div key={signal.id}>
+            <div className="mb-1 flex items-center justify-between gap-2 text-[11px]">
+              <span className="truncate font-medium text-black/58">{signal.label}</span>
+              <span className="shrink-0 font-mono text-[10px] text-black/34">dim {signal.values.length}</span>
+            </div>
+            <div className="grid gap-1 rounded-[8px] bg-black/[0.04] p-1" style={{ gridTemplateColumns: `repeat(${signal.values.length}, minmax(0, 1fr))` }}>
+              {signal.values.map((value, index) => (
+                <div
+                  key={`${signal.id}-${index}`}
+                  className="h-6 rounded-[4px] transition-colors duration-300"
+                  title={`${signal.label}[${index}] = ${value.toFixed(3)}`}
+                  style={{
+                    backgroundColor: value >= 0
+                      ? `rgba(0, 113, 227, ${0.18 + Math.abs(value) * 0.62})`
+                      : `rgba(255, 69, 58, ${0.18 + Math.abs(value) * 0.62})`,
+                  }}
+                />
+              ))}
+            </div>
+            <div className="mt-1 flex justify-between font-mono text-[9px] text-black/30">
+              <span>-1.0</span>
+              <span>0</span>
+              <span>+1.0</span>
+            </div>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

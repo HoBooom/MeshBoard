@@ -29,6 +29,7 @@ LLM 은 **반드시** 아래 두 형식 중 하나로만 응답합니다.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import operator
@@ -141,20 +142,30 @@ def _build_openai_client() -> OpenAI:
 
 
 def _normalize_model_name(model_name: str) -> str:
-    """RunYour AI 가 요구하는 provider/model 형식으로 모델명을 보정합니다."""
+    """RunYour AI 가 요구하는 provider/model 형식으로 모델명을 보정합니다.
+
+    RunYour 등록명에는 version date suffix가 붙는 경우가 많아 짧은 alias를 풀이한다.
+    """
     normalized = model_name.strip()
-    if normalized in {"gpt-5-mini", "openai/gpt-5-mini"}:
-        return "openai/gpt-5"
+    alias = {
+        "gpt-5-mini": "openai/gpt-5-mini-2025-08-07",
+        "openai/gpt-5-mini": "openai/gpt-5-mini-2025-08-07",
+        "gpt-5-nano": "openai/gpt-5-nano-2025-08-07",
+        "openai/gpt-5-nano": "openai/gpt-5-nano-2025-08-07",
+    }
+    if normalized in alias:
+        return alias[normalized]
     if "/" in normalized:
         return normalized
     return f"openai/{normalized}"
 
 
-_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
-
-
 def _extract_json(raw: str) -> Optional[Dict[str, Any]]:
-    """LLM 응답 텍스트에서 JSON 객체를 안전하게 뽑아냅니다."""
+    """LLM 응답 텍스트에서 첫 번째 valid JSON object를 안전하게 뽑아냅니다.
+
+    LLM이 한 응답에 여러 개의 JSON object를 나열하는 경우(예: tool call 3개를 newline으로 연결)에도
+    첫 번째 balanced-brace object만 parse한다. 나머지는 graph의 다음 cycle에서 LLM이 재발화한다.
+    """
     if not raw:
         return None
     raw = raw.strip()
@@ -163,16 +174,47 @@ def _extract_json(raw: str) -> Optional[Dict[str, Any]]:
         if raw.lower().startswith("json"):
             raw = raw[4:]
         raw = raw.strip()
+
+    # 1) 전체가 단일 JSON object이면 fast path.
     try:
-        return json.loads(raw)
+        candidate = json.loads(raw)
+        if isinstance(candidate, dict):
+            return candidate
     except json.JSONDecodeError:
-        match = _JSON_OBJECT_RE.search(raw)
-        if not match:
-            return None
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None
+        pass
+
+    # 2) Balanced-brace로 첫 번째 valid JSON object 찾기 (string 내 {} 무시).
+    depth = 0
+    start = -1
+    in_str = False
+    escape = False
+    for idx, ch in enumerate(raw):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            if depth == 0:
+                start = idx
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start != -1:
+                snippet = raw[start:idx + 1]
+                try:
+                    candidate = json.loads(snippet)
+                    if isinstance(candidate, dict):
+                        return candidate
+                except json.JSONDecodeError:
+                    start = -1  # 다음 object 시도
+    return None
 
 
 def _call_tool(tool_id: str, arguments: Dict[str, Any]) -> str:
@@ -225,7 +267,9 @@ def _build_agent_graph(
             completion = client.chat.completions.create(
                 model=model_name,
                 messages=state["messages"],
-                max_completion_tokens=1200,
+                # 1200은 17 building × validate JSON stringify를 담기에 부족하여 truncate 발생.
+                # 4096으로 상향 (Grid-Agent 17 building 시 validate 호출이 ~2000자 차지).
+                max_completion_tokens=4096,
             )
         except Exception as exc:
             logger.exception("LLM call failed")
@@ -386,7 +430,13 @@ async def invoke_agent(
             "error": None,
         }
 
-    state = graph.invoke(
+    # graph.invoke 와 그 내부의 OpenAI sync client 호출은 블로킹이다. 이를 event loop 에서
+    # 직접 await 하면(동기 호출이므로) 17 building 병렬 invoke(asyncio.gather)가 사실상 직렬화되고,
+    # asyncio.wait_for timeout 도, client 연결 끊김/서버 종료 시 cancellation 도 먹지 않는다.
+    # to_thread 로 thread pool 에 넘겨 (1) gather 가 실제 병렬 실행되고 (2) timeout/cancel 이
+    # 호출 대기를 중단시킬 수 있게 한다(이미 시작된 HTTP 호출 자체는 thread 에서 끝까지 진행).
+    state = await asyncio.to_thread(
+        graph.invoke,
         initial_state,
         config=config,
         interrupt_after=interrupt_after,

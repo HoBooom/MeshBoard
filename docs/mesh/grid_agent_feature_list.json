@@ -1,0 +1,418 @@
+{
+  "project": "MeshBoard",
+  "last_updated": "2026-05-26",
+  "context": "Grid-Agent 논문 구조를 CityLearn 기반 Agent-Mesh 전력 관리 시스템으로 고도화하는 구현 플랜",
+  "source_docs": [
+    "docs/Grid_Agent.md",
+    "docs/mesh/grid_agent_overview.md",
+    "docs/citylearn-agentic-analysis.md",
+    "feature_list.json",
+    "citylearn_feature_list.json"
+  ],
+  "rules": {
+    "single_active_feature": true,
+    "passing_requires_evidence": true,
+    "do_not_skip_verification": true,
+    "sandbox_before_apply": true,
+    "llm_must_not_directly_control_assets": true
+  },
+  "status_legend": {
+    "not_started": "Work has not begun.",
+    "in_progress": "The feature is the current active task.",
+    "blocked": "Work cannot continue until a documented blocker is resolved.",
+    "passing": "Required verification has passed and evidence is recorded."
+  },
+  "architecture_principles": [
+    "LLM은 전략 생성기이며, action 적용 여부는 deterministic validator가 결정한다.",
+    "모든 action은 sandbox state에서 먼저 실행하고 검증한다.",
+    "CityLearn phase_all MVP에서는 electrical_storage action만 허용한다.",
+    "Workspace metadata.agent_building_mapping을 topology source of truth로 사용한다.",
+    "Board에는 preview/live 연결 상태, validation result, reasoning trace를 명확히 분리해 표시한다.",
+    "Human approval을 기본값으로 두고 자동 적용은 후속 phase에서 다룬다."
+  ],
+  "features": [
+    {
+      "id": "GA-docs-001",
+      "priority": 1,
+      "area": "docs",
+      "title": "Grid-Agent 핵심 개념 및 MeshBoard 적용 개요 문서화",
+      "user_visible_behavior": "개발자와 운영자는 긴 논문 분석 문서를 읽지 않아도 Grid-Agent의 핵심 개념, MeshBoard 대응 관계, 구현 순서를 빠르게 이해할 수 있다.",
+      "status": "passing",
+      "implementation_scope": [
+        "docs/mesh 폴더 생성",
+        "grid_agent_overview.md에 필수 개념, 현재 프로젝트 기준, 아키텍처, runtime flow, action space, violation model 정리",
+        "기존 docs/Grid_Agent.md는 상세 논문 분석 문서로 유지하고 새 overview 문서를 짧은 기준 문서로 사용"
+      ],
+      "verification": [
+        "1. docs/mesh/grid_agent_overview.md 파일이 존재한다.",
+        "2. 문서에 Grid-Agent 5개 역할과 MeshBoard 대응 관계가 포함된다.",
+        "3. 문서에 CityLearn phase_all 제약과 electrical_storage action 범위가 포함된다.",
+        "4. 문서에 API 초안과 우선 구현 순서가 포함된다."
+      ],
+      "evidence": [
+        "docs/mesh/grid_agent_overview.md"
+      ],
+      "notes": "상세 논문 분석은 docs/Grid_Agent.md에 두고, 실제 구현 기준은 docs/mesh/grid_agent_overview.md를 우선 참조한다."
+    },
+    {
+      "id": "GA-schema-001",
+      "priority": 2,
+      "area": "backend_schema",
+      "title": "CityLearn Grid-Agent Pydantic 스키마 정의",
+      "user_visible_behavior": "Grid-Agent plan API가 violation, action, validation result를 일관된 JSON 구조로 반환한다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "backend/app/schemas/citylearn_grid_agent.py 추가",
+        "CityLearnViolation, CityLearnAction, CityLearnPlan, CityLearnValidationResult 스키마 정의",
+        "GridAgentAnalyzeRequest/Response와 GridAgentPlanRequest/Response 정의",
+        "action 범위 -1.0~1.0, confidence 0.0~1.0, step 0~8759 validation 적용",
+        "Literal 타입으로 violation/action mode를 제한"
+      ],
+      "api_contract": {
+        "request": {
+          "workspace_id": "uuid string",
+          "step": "0..8759",
+          "baseline_model": "basic_rbc | optimized_rbc | basic_battery_rbc | sacrbc | sac | marlisa",
+          "agent_mesh_mode": "not_configured | demo_heuristic | configured_agents",
+          "window": "1..168",
+          "max_iterations": "1..6",
+          "require_human_approval": true
+        },
+        "response": {
+          "run_id": "uuid string",
+          "step": "number",
+          "topology_summary": "object",
+          "initial_violations": "CityLearnViolation[]",
+          "final_plan": "CityLearnPlan | null",
+          "validation": "CityLearnValidationResult",
+          "iterations": "object[]",
+          "operator_summary": "string"
+        }
+      },
+      "verification": [
+        "1. Pydantic 모델 import와 compile이 성공한다.",
+        "2. action 값이 -1.0~1.0 범위를 벗어나면 validation error가 발생한다.",
+        "3. step 값이 0~8759 범위를 벗어나면 validation error가 발생한다.",
+        "4. sample request/response가 model_validate/model_dump를 통과한다."
+      ],
+      "evidence": [],
+      "notes": "기존 frontend/src/api/citylearn.ts 타입과 맞물리도록 snake_case JSON을 유지한다."
+    },
+    {
+      "id": "GA-engine-001",
+      "priority": 3,
+      "area": "backend_runtime",
+      "title": "Deterministic Grid-Agent 엔진 MVP",
+      "user_visible_behavior": "운영자는 LLM 연결 전에도 현재 CityLearn Board 상태를 분석하고, 안전 검증된 배터리 action plan preview를 볼 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "backend/app/services/citylearn_grid_agent.py 추가",
+        "TopologyAnalyzer 구현: get_board_snapshot 결과와 workspace metadata.agent_building_mapping 결합",
+        "ViolationDetector 구현: peak, ramping, soc, mapping, fairness, invalid_action 탐지",
+        "HeuristicPlanner 구현: SOC와 net load 기준으로 battery action 후보 생성",
+        "SandboxExecutor 구현: deepcopy state에 action 적용",
+        "ConstraintValidator 구현: score_before/score_after와 새 violation 탐지",
+        "OperatorSummarizer 구현: 승인/거절 이유를 한국어 요약으로 생성"
+      ],
+      "engine_components": [
+        "TopologyAnalyzer",
+        "ViolationDetector",
+        "HeuristicPlanner",
+        "SandboxExecutor",
+        "ConstraintValidator",
+        "OperatorSummarizer"
+      ],
+      "verification": [
+        "1. 특정 step에서 get_board_snapshot 결과를 받아 topology summary가 생성된다.",
+        "2. 미할당 building이 있으면 mapping violation이 생성된다.",
+        "3. SOC가 낮은 building에는 discharge action이 생성되지 않는다.",
+        "4. sandbox 실행 후 원본 snapshot 객체가 변경되지 않는다.",
+        "5. score_after가 score_before보다 나쁘면 validation.approved=false가 반환된다.",
+        "6. compileall 또는 unit test가 통과한다."
+      ],
+      "evidence": [],
+      "notes": "이 feature는 LLM 없이 구현한다. 먼저 deterministic workflow를 완성해야 이후 LLM Planner 실패 원인을 분리할 수 있다."
+    },
+    {
+      "id": "GA-api-001",
+      "priority": 4,
+      "area": "backend_api",
+      "title": "CityLearn Grid-Agent Analyze/Plan API",
+      "user_visible_behavior": "Board가 현재 workspace와 step을 기준으로 Grid-Agent 분석과 plan preview를 요청할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "backend/app/api/v1/citylearn.py에 /grid-agent/analyze 추가 또는 별도 router 생성",
+        "POST /api/v1/citylearn/grid-agent/analyze 구현",
+        "POST /api/v1/citylearn/grid-agent/plan 구현",
+        "workspace 접근 권한 검증",
+        "workspace.metadata.agent_building_mapping 로드",
+        "기존 get_board_snapshot과 Grid-Agent 엔진 연결",
+        "API error response에 validation 실패와 runtime 실패를 구분"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/citylearn/grid-agent/analyze",
+          "purpose": "현재 topology와 violation만 반환"
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/citylearn/grid-agent/plan",
+          "purpose": "plan 생성, sandbox 실행, validation 결과 반환"
+        }
+      ],
+      "verification": [
+        "1. 인증된 사용자가 접근 가능한 workspace_id로 analyze 호출 시 200 응답을 받는다.",
+        "2. 권한 없는 workspace_id로 호출 시 403 또는 404가 반환된다.",
+        "3. plan 호출 결과에 run_id, initial_violations, final_plan, validation, operator_summary가 포함된다.",
+        "4. 기존 GET /api/v1/citylearn/board 동작이 깨지지 않는다.",
+        "5. backend compileall이 통과한다."
+      ],
+      "evidence": [],
+      "notes": "초기 API는 DB에 plan을 저장하지 않는 preview-only 동작으로 제한한다."
+    },
+    {
+      "id": "GA-mcp-001",
+      "priority": 5,
+      "area": "llm_tools",
+      "title": "Grid-Agent용 MCP Tool Catalog 확장",
+      "user_visible_behavior": "Creator에서 등록한 LLM Planner가 CityLearn 상태 조회와 action 검증 도구를 호출해 검증된 답변을 생성할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "backend/app/services/tool_catalog.py에 CityLearn Grid-Agent tool 추가",
+        "get_citylearn_board_state tool 구현",
+        "detect_citylearn_violations tool 구현",
+        "validate_citylearn_battery_plan tool 구현",
+        "tool output을 LLM 재계획에 적합한 작은 JSON으로 제한",
+        "도구가 live state를 변경하지 않도록 preview-only 보장"
+      ],
+      "tools": [
+        {
+          "name": "get_citylearn_board_state",
+          "description": "현재 CityLearn board snapshot을 요약 JSON으로 반환"
+        },
+        {
+          "name": "detect_citylearn_violations",
+          "description": "peak/SOC/mapping/fairness violation을 반환"
+        },
+        {
+          "name": "validate_citylearn_battery_plan",
+          "description": "battery action plan을 sandbox에서 검증"
+        }
+      ],
+      "verification": [
+        "1. GET /api/v1/agents/tools 응답에 Grid-Agent tool이 노출된다.",
+        "2. validate_citylearn_battery_plan에 invalid JSON을 넣으면 approved=false와 feedback이 반환된다.",
+        "3. 존재하지 않는 building_id action은 rejected result를 반환한다.",
+        "4. tool_catalog.py compile이 성공한다.",
+        "5. 기존 HR/계산/web tool 동작이 깨지지 않는다."
+      ],
+      "evidence": [],
+      "notes": "agent_runtime.py의 텍스트 JSON tool protocol과 호환되도록 input schema를 단순하게 유지한다."
+    },
+    {
+      "id": "GA-agents-001",
+      "priority": 6,
+      "area": "agent_registry",
+      "title": "Grid-Agent 기본 Agent Card 및 Seed 데이터",
+      "user_visible_behavior": "개발자/운영자는 Creator나 seed script를 통해 City Grid Coordinator, Building Battery Agent, Constraint Guard를 바로 워크스페이스에 배치할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "seed_agents.py 또는 별도 seed_grid_agents.py에 Grid-Agent 기본 에이전트 추가",
+        "City Grid Coordinator agent card 작성",
+        "Building Battery Agent agent card 작성",
+        "CityLearn Constraint Guard agent card 작성",
+        "각 agent에 적절한 tools, roles, metadata.category 설정",
+        "system_prompt에 CityLearn phase_all action 제약 명시"
+      ],
+      "seed_agents": [
+        "City Grid Coordinator",
+        "Building Battery Agent",
+        "CityLearn Constraint Guard"
+      ],
+      "verification": [
+        "1. seed 실행 후 marketplace 또는 creator 목록에 Grid-Agent 3종이 표시된다.",
+        "2. City Grid Coordinator에 validate_citylearn_battery_plan tool이 연결된다.",
+        "3. Building Battery Agent prompt에 assigned building 외 제어 금지 규칙이 포함된다.",
+        "4. Constraint Guard prompt에 승인/거절 기준이 포함된다."
+      ],
+      "evidence": [],
+      "notes": "초기에는 DRAFT 또는 PRIVATE로 seed하고, 검증 후 ACTIVE/PUBLIC 전환을 고려한다."
+    },
+    {
+      "id": "GA-llm-001",
+      "priority": 7,
+      "area": "llm_orchestration",
+      "title": "LLM Planner Replanning Loop 연결",
+      "user_visible_behavior": "Grid-Agent가 첫 plan 검증에 실패하면 validation feedback을 반영해 자동으로 수정 plan을 생성한다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "Grid-Agent plan API에서 선택적으로 LLM Planner invoke 호출",
+        "agent_runtime.py의 JSON protocol을 유지",
+        "Planner 출력 action JSON schema 검증",
+        "검증 실패 시 forbidden_action_keys와 validation feedback을 prompt에 재주입",
+        "max_iterations 제한 적용",
+        "LLM 실패 시 deterministic heuristic fallback 사용"
+      ],
+      "verification": [
+        "1. Planner가 schema에 없는 action을 내면 Executor 전에 reject된다.",
+        "2. 검증 실패 시 같은 action sequence가 반복되지 않는다.",
+        "3. max_iterations를 초과하면 rejected response와 operator_summary가 반환된다.",
+        "4. RUNYOUR_API_KEY가 없거나 LLM 호출 실패 시 deterministic fallback이 동작한다.",
+        "5. iterations trace에 planner_output, validation_feedback, route decision이 기록된다."
+      ],
+      "evidence": [],
+      "notes": "LLM 품질보다 validator 안정성이 우선이다. LLM output은 신뢰하지 않고 항상 schema validation과 sandbox validation을 통과해야 한다."
+    },
+    {
+      "id": "GA-ui-001",
+      "priority": 8,
+      "area": "frontend_board",
+      "title": "Board Grid-Agent Validation Panel",
+      "user_visible_behavior": "운영자는 Workspace Board에서 Grid-Agent 실행 버튼을 누르고, 제안 action과 승인/거절 이유를 한 화면에서 확인할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "frontend/src/api/citylearn.ts에 Grid-Agent 타입과 API client 추가",
+        "WorkspacePage Board 영역에 Run Grid-Agent Plan 버튼 추가",
+        "validation approved/rejected badge 추가",
+        "score_before -> score_after 표시",
+        "initial_violations 목록 표시",
+        "proposed actions 목록 표시",
+        "operator_summary 표시",
+        "loading/error/empty 상태 처리"
+      ],
+      "ui_elements": [
+        "Run Grid-Agent Plan button",
+        "Validation status badge",
+        "Score delta metric",
+        "Violation list",
+        "Proposed action list",
+        "Operator summary panel"
+      ],
+      "verification": [
+        "1. CityLearn workspace Board에서 Run Grid-Agent Plan 버튼이 표시된다.",
+        "2. 버튼 클릭 시 POST /citylearn/grid-agent/plan이 호출된다.",
+        "3. 응답의 validation.approved 값에 따라 badge 색상과 텍스트가 바뀐다.",
+        "4. proposed action의 building_id, action, reason이 표시된다.",
+        "5. API 실패 시 기존 Board chart와 heatmap은 유지되고 error message만 표시된다.",
+        "6. frontend build가 통과한다."
+      ],
+      "evidence": [],
+      "notes": "초기 UI는 별도 페이지가 아니라 기존 Board 우측/하단 inspector에 붙인다."
+    },
+    {
+      "id": "GA-ui-002",
+      "priority": 9,
+      "area": "frontend_board",
+      "title": "빌딩 Heatmap Action Overlay",
+      "user_visible_behavior": "운영자는 각 빌딩 카드에서 Grid-Agent가 제안한 charge/discharge/hold action과 confidence를 즉시 확인할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "Grid-Agent plan response를 building_id 기준으로 indexing",
+        "빌딩 heatmap cell에 proposed action value 표시",
+        "charge/discharge/hold mode를 시각적으로 구분",
+        "confidence와 reason tooltip 추가",
+        "validation rejected action은 경고 스타일로 표시",
+        "selected building detail에 action reason과 expected_effect 추가"
+      ],
+      "verification": [
+        "1. action이 있는 빌딩 카드에 action value가 표시된다.",
+        "2. charge/discharge/hold가 서로 구분된다.",
+        "3. selected building detail에서 reason과 expected_effect가 표시된다.",
+        "4. action이 없는 빌딩은 기존 heatmap 표시를 유지한다.",
+        "5. validation rejected 상태가 시각적으로 구분된다."
+      ],
+      "evidence": [],
+      "notes": "텍스트 과밀을 피하기 위해 카드에는 값과 mode만 표시하고 상세 설명은 inspector 또는 tooltip에 둔다."
+    },
+    {
+      "id": "GA-log-001",
+      "priority": 10,
+      "area": "experiment_logging",
+      "title": "Grid-Agent Run/Action 로그 저장",
+      "user_visible_behavior": "운영자와 개발자는 Grid-Agent 실행 이력, 승인 여부, action sequence, KPI 개선량을 나중에 다시 확인할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "citylearn_grid_agent_runs 테이블 migration 추가",
+        "citylearn_grid_agent_actions 테이블 migration 추가",
+        "plan API에 commit_preview 또는 save_run 옵션 추가",
+        "approved/rejected 결과와 전체 payload JSONB 저장",
+        "workspace_id, step, baseline_model, score_before, score_after index 고려",
+        "개인정보 또는 secret이 payload에 들어가지 않도록 sanitize"
+      ],
+      "tables": [
+        "citylearn_grid_agent_runs",
+        "citylearn_grid_agent_actions"
+      ],
+      "verification": [
+        "1. alembic upgrade head가 성공한다.",
+        "2. plan 실행 후 run row가 저장된다.",
+        "3. action이 있는 plan은 actions table에 building별 row가 저장된다.",
+        "4. rejected run도 저장된다.",
+        "5. payload JSONB에서 민감정보가 제외된다."
+      ],
+      "evidence": [],
+      "notes": "실험 재현성과 논문/캡스톤 리포트를 위해 실패 run도 저장한다."
+    },
+    {
+      "id": "GA-kpi-001",
+      "priority": 11,
+      "area": "evaluation",
+      "title": "Grid-Agent KPI 및 Baseline 비교 리포트",
+      "user_visible_behavior": "운영자는 BasicRBC/SACRBC/Agent-Mesh/Grid-Agent의 peak, action efficiency, approval rate 차이를 비교할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "Grid-Agent run 로그 기반 KPI 계산 service 추가",
+        "approval_rate 계산",
+        "action_efficiency 계산",
+        "score_improvement 계산",
+        "new_violation_rate 계산",
+        "fairness_burden 계산",
+        "BasicRBC/SACRBC/Agent-Mesh 대비 Grid-Agent 개선율 표시"
+      ],
+      "metrics": [
+        "approval_rate",
+        "score_improvement",
+        "peak_reduction_kwh",
+        "action_efficiency",
+        "new_violation_rate",
+        "fairness_burden",
+        "average_iterations",
+        "runtime_ms"
+      ],
+      "verification": [
+        "1. 저장된 run이 없을 때 empty KPI response가 안전하게 반환된다.",
+        "2. approved/rejected run이 섞여 있을 때 approval_rate가 정확히 계산된다.",
+        "3. action_count가 0일 때 action_efficiency가 0 또는 null로 안전 처리된다.",
+        "4. Board 또는 별도 리포트 UI에서 KPI가 표시된다."
+      ],
+      "evidence": [],
+      "notes": "Grid-Agent의 가치는 성공 여부뿐 아니라 적은 action으로 얼마나 개선했는지로 평가해야 한다."
+    },
+    {
+      "id": "GA-live-001",
+      "priority": 12,
+      "area": "citylearn_runtime",
+      "title": "CityLearn Live Environment Step 연동",
+      "user_visible_behavior": "Grid-Agent가 deterministic preview가 아니라 실제 CityLearn environment step 결과를 기준으로 action을 검증할 수 있다.",
+      "status": "not_started",
+      "implementation_scope": [
+        "현재 citylearn_sacrbc_inference.py bridge 구조 검토",
+        "CityLearn env reset/step lifecycle service 분리",
+        "Agent-Mesh action vector를 CityLearn env action shape으로 변환",
+        "sandbox env copy 또는 replay 가능한 isolated runner 구현",
+        "live runner 연결 상태를 Board runtime에 표시",
+        "deterministic preview와 live validation 결과 차이를 기록"
+      ],
+      "verification": [
+        "1. CityLearn env가 특정 step까지 replay 또는 fast-forward 된다.",
+        "2. 17개 building action vector가 env.step에 맞는 shape으로 변환된다.",
+        "3. invalid action shape은 step 전에 reject된다.",
+        "4. live validation 실패 시 deterministic preview fallback이 동작한다.",
+        "5. Board runtime.citylearn_environment_step_connected가 실제 상태와 일치한다."
+      ],
+      "evidence": [],
+      "notes": "가장 후순위다. preview 기반 deterministic Grid-Agent와 UI가 먼저 안정화된 뒤 연결한다."
+    }
+  ]
+}
