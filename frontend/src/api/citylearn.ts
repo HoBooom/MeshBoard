@@ -6,7 +6,8 @@ export type CityLearnAgentMeshMode =
   | 'demo_heuristic'
   | 'configured_agents'
   | 'grid_agent'
-  | 'macro_mesh';
+  | 'macro_mesh'
+  | 'macro_mesh_v2';
 
 export interface CityLearnBoardPoint {
   time_step: number;

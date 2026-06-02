@@ -33,6 +33,7 @@ from app.services.citylearn_board import get_board_snapshot
 from app.services.citylearn_grid_agent import run_deterministic_plan
 from app.services.citylearn_grid_agent_llm import publish_plan_message, run_llm_planner_loop
 from app.services.citylearn_macro_mesh import run_macro_mesh_negotiation
+from app.services.citylearn_macro_mesh_v2 import run_macro_mesh_v2_negotiation
 
 
 router = APIRouter(prefix="/citylearn", tags=["citylearn"])
@@ -44,6 +45,7 @@ AgentMeshMode = Literal[
     "configured_agents",
     "grid_agent",
     "macro_mesh",
+    "macro_mesh_v2",
 ]
 
 
@@ -213,8 +215,16 @@ async def citylearn_macro_mesh_negotiate(
         window=payload.window,
     )
 
+    # macro_mesh_v2: 논문 MACRO-LLM 3모듈 복원판(CoProposer rollout + Introspector).
+    # workspace별 전략을 누적해 step 간 temporal reasoning을 유지한다. 반환형은 v1과 동일.
+    runner = (
+        run_macro_mesh_v2_negotiation
+        if payload.agent_mesh_mode == "macro_mesh_v2"
+        else run_macro_mesh_negotiation
+    )
+
     try:
-        result = await run_macro_mesh_negotiation(
+        result = await runner(
             db=db,
             workspace_id=workspace.workspace_id,
             snapshot=snapshot,

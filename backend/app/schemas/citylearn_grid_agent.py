@@ -44,6 +44,7 @@ AgentMeshMode = Literal[
     "configured_agents",
     "grid_agent",
     "macro_mesh",
+    "macro_mesh_v2",
 ]
 
 PlannerKind = Literal["heuristic", "llm"]

@@ -44,6 +44,8 @@ AGENT_MESH_PEAK_MITIGATION: Dict[str, float] = {
     # macro_mesh: 분산 협상(CoProposer × 17 + Negotiator). 분산 의사결정이 더 적극적으로
     # 부담을 분산시킨다는 가설에 따라 grid_agent보다 약간 높게 설정. Phase 4 KPI로 보정.
     "macro_mesh": 0.20,
+    # macro_mesh_v2: rollout 검증 + Introspector 복원판. v1 대비 조정 안정성↑ 가설로 약간 높게.
+    "macro_mesh_v2": 0.22,
 }
 
 

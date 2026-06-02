@@ -159,7 +159,7 @@ type CityLearnBatteryAction = 'charging' | 'discharging' | 'idle';
 
 type CityLearnBaselineModel = 'basic_rbc' | 'optimized_rbc' | 'basic_battery_rbc' | 'sacrbc' | 'sac' | 'marlisa';
 
-type CityLearnAgentMeshMode = 'not_configured' | 'demo_heuristic' | 'configured_agents' | 'deterministic' | 'llm_planner' | 'macro_mesh';
+type CityLearnAgentMeshMode = 'not_configured' | 'demo_heuristic' | 'configured_agents' | 'deterministic' | 'llm_planner' | 'macro_mesh' | 'macro_mesh_v2';
 
 type CityLearnBoardMetricView = 'power' | 'reward';
 
@@ -348,6 +348,13 @@ const CITYLEARN_AGENT_MESH_MODES: Array<{
     status: 'demo',
     description: 'Play 시 매 step마다 17개 Building Battery Agent가 병렬로 proposal을 발의하고 (asyncio.gather), Coordinator가 mean_field/conflict를 산출해 round 2 재제안을 유도합니다. 메시지 피드에 라운드별 trace가 누적됩니다.',
     peakMitigation: 0.20,
+  },
+  {
+    id: 'macro_mesh_v2',
+    label: 'MACRO-Mesh v2 (rollout + Introspector)',
+    status: 'demo',
+    description: 'MACRO-Mesh에 논문(MACRO-LLM)의 CoProposer rollout 검증과 Introspector(LLM semantic-gradient 자기반성)를 복원한 버전입니다. 협상 결과를 k-step rollout으로 검증해 최선 후보를 채택하고, step 간 전략을 누적해 다음 협상에 주입합니다(빌딩 수 증가·돌발상황에서 v1 대비 조정 안정성↑).',
+    peakMitigation: 0.22,
   },
 ];
 
@@ -894,6 +901,10 @@ export default function WorkspacePage() {
   const [mentionRange, setMentionRange] = useState<{ start: number; end: number; query: string } | null>(null);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [optimisticMessages, setOptimisticMessages] = useState<WorkspaceMessage[]>([]);
+  // 메시지 페이지 "clean" 버튼: 현재까지의 메시지 message_id를 기록해 view에서 숨긴다(데모용,
+  // 모드별 메시지가 섞여 보기 어려울 때 사용). 백엔드 삭제가 아니라 클라이언트 필터이며,
+  // 이후 새로 생성되는 메시지(새 id)는 그대로 표시된다.
+  const [clearedMessageIds, setClearedMessageIds] = useState<Set<string>>(new Set());
   const [typingAgentIds, setTypingAgentIds] = useState<string[]>([]);
   const [publishResult, setPublishResult] = useState<PublishMessageResult | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
@@ -991,6 +1002,21 @@ export default function WorkspacePage() {
     },
     [detail?.messages, optimisticMessages, selectedGoal?.conversation_id]
   );
+  // 메시지 페이지 렌더 전용: clean으로 숨긴 메시지를 제외. 맵/토폴로지(activeMessages)에는 영향 없음.
+  const visibleMessages = useMemo(
+    () => (clearedMessageIds.size === 0
+      ? activeMessages
+      : activeMessages.filter((message) => !clearedMessageIds.has(message.message_id))),
+    [activeMessages, clearedMessageIds]
+  );
+  const cleanMessages = () => {
+    setClearedMessageIds((prev) => {
+      const next = new Set(prev);
+      activeMessages.forEach((message) => next.add(message.message_id));
+      return next;
+    });
+    setOptimisticMessages([]);
+  };
   const selectedMapNode = mapNodes.find((node) => node.id === selectedMapNodeId);
   const selectedMapEdge = mapEdges.find((edge) => edge.id === selectedMapEdgeId);
   const topologyEdges = useMemo(
@@ -1153,6 +1179,7 @@ export default function WorkspacePage() {
       cityLearnAgentMeshMode === 'deterministic'
       || cityLearnAgentMeshMode === 'llm_planner'
       || cityLearnAgentMeshMode === 'macro_mesh'
+      || cityLearnAgentMeshMode === 'macro_mesh_v2'
     ) return;
 
     const timer = window.setInterval(() => {
@@ -1309,7 +1336,7 @@ export default function WorkspacePage() {
   // 중복 dispatch는 macroLoopInFlight ref로 막는다(pending step을 deps에 넣으면 self-cancel 됨).
   useEffect(() => {
     if (view !== 'detail' || !activeCityLearnWorkspace || !detail) return;
-    if (cityLearnAgentMeshMode !== 'macro_mesh') return;
+    if (cityLearnAgentMeshMode !== 'macro_mesh' && cityLearnAgentMeshMode !== 'macro_mesh_v2') return;
     if (cityLearnSimulation.status !== 'running') return;
     if (macroLoopInFlight.current) return;
 
@@ -1355,7 +1382,7 @@ export default function WorkspacePage() {
       workspace_id: workspaceId,
       step: requestStep,
       baseline_model: cityLearnBaselineModel,
-      agent_mesh_mode: 'macro_mesh',
+      agent_mesh_mode: cityLearnAgentMeshMode,
       window: 24,
       max_rounds: 2,
       use_llm_proposers: cityLearnUseLLMPlanner,
@@ -1521,6 +1548,7 @@ export default function WorkspacePage() {
       const data = await workspacesApi.get(workspaceId);
       setDetail(data);
       setOptimisticMessages([]);
+      setClearedMessageIds(new Set());
       setTypingAgentIds([]);
       setMapNodePositions({});
       setPendingTopologyEdges([]);
@@ -3346,14 +3374,32 @@ export default function WorkspacePage() {
 	
 	            {workspaceMode === 'messaging' ? (
 	              <>
-                <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-6 md:px-7">
-                  {activeMessages.length === 0 ? (
+                <div className="relative min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-6 md:px-7">
+                  {visibleMessages.length > 0 && (
+                    <div className="pointer-events-none sticky top-0 z-20 -mt-2 -mb-4 flex justify-end">
+                      <button
+                        type="button"
+                        onClick={cleanMessages}
+                        title="메시지 기록 비우기 (데모용)"
+                        aria-label="메시지 기록 비우기"
+                        className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center rounded-full border border-black/10 bg-white/90 text-black/55 shadow-sm backdrop-blur transition hover:bg-black/[0.04] hover:text-black/80"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M3 6h18" />
+                          <path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2" />
+                          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                          <path d="M10 11v6M14 11v6" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                  {visibleMessages.length === 0 ? (
                     <div className="mx-auto mt-20 max-w-[420px] rounded-[18px] border border-black/8 bg-white p-6 text-center shadow-sm">
                       <p className="text-[17px] font-semibold text-[#1d1d1f]">아직 메시지가 없습니다</p>
                       <p className="mt-2 text-[13px] leading-5 text-black/50">워크스페이스에 첫 메시지를 보내면 에이전트 협업 타임라인이 이곳에 표시됩니다.</p>
                     </div>
                   ) : (
-                    activeMessages.map((message) => {
+                    visibleMessages.map((message) => {
                       const isSystem = message.sender_type === 'system';
                       const isMine = message.sender_type === 'user' && message.sender_id === user?.user_id;
                       const isExpanded = expandedMessageId === message.message_id;
@@ -4073,17 +4119,20 @@ function CityLearnSimulationControlBar({
   const progress = cityLearnProgressPercent(simulation.step);
   const running = simulation.status === 'running';
   const isGridMode = agentMeshMode === 'deterministic' || agentMeshMode === 'llm_planner';
-  const isAsyncMode = isGridMode || agentMeshMode === 'macro_mesh';
+  const isMacroMode = agentMeshMode === 'macro_mesh' || agentMeshMode === 'macro_mesh_v2';
+  const isAsyncMode = isGridMode || isMacroMode;
   const isWaitingForPlan =
     isAsyncMode
     && running
     && ((isGridMode && simulation.pendingGridAgentStep === simulation.step)
-      || (agentMeshMode === 'macro_mesh' && simulation.pendingMacroMeshStep === simulation.step));
-  const waitingSubject = agentMeshMode === 'macro_mesh'
-    ? '17 building 협상'
-    : agentMeshMode === 'llm_planner'
-      ? 'LLM'
-      : '규칙 평가';
+      || (isMacroMode && simulation.pendingMacroMeshStep === simulation.step));
+  const waitingSubject = agentMeshMode === 'macro_mesh_v2'
+    ? '17 building 협상 + rollout/introspect'
+    : agentMeshMode === 'macro_mesh'
+      ? '17 building 협상'
+      : agentMeshMode === 'llm_planner'
+        ? 'LLM'
+        : '규칙 평가';
   const playLabel = isWaitingForPlan
     ? `Running step ${simulation.step + 1}/${CITYLEARN_TOTAL_STEPS} · ${waitingSubject} 응답 대기 중...`
     : 'Play';
@@ -4104,7 +4153,7 @@ function CityLearnSimulationControlBar({
             </span>
             {isAsyncMode && (
               <span className="rounded-full bg-[#ff9500]/14 px-2 py-0.5 text-[10px] font-semibold text-[#a05a00]">
-                {agentMeshMode === 'macro_mesh' ? 'macro_mesh · 17 building 협상' : `${agentMeshMode} · 직렬 진행`}
+                {isMacroMode ? `${agentMeshMode} · 17 building 협상` : `${agentMeshMode} · 직렬 진행`}
               </span>
             )}
           </div>
@@ -4823,7 +4872,7 @@ function CityLearnBoardView({
 	        />
 	      )}
 
-	      {agentMeshMode === 'macro_mesh' && (
+	      {(agentMeshMode === 'macro_mesh' || agentMeshMode === 'macro_mesh_v2') && (
 	        <NegotiationTracePanel
 	          run={simulation.lastMacroMeshRun}
 	          pendingStep={simulation.pendingMacroMeshStep}

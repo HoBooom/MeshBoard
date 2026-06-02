@@ -1,0 +1,515 @@
+{
+  "config": {
+    "start": 4200,
+    "horizon": 15,
+    "initial_soc": 0.5,
+    "dummies": 2,
+    "shock_mult": 2.0,
+    "workspace_id": "97b8a037-ef3a-4fda-998a-e467400740de",
+    "normal_load_est": 18.37,
+    "shock_kwh": 36.73
+  },
+  "experiments": {
+    "normal": {
+      "noctrl": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 0.999999999743073,
+          "grid_cost": 1.0000000566270866,
+          "resilience_cost": null,
+          "challenge_cost": 1.0000000281850798,
+          "cost_total": 1.0000000025789046,
+          "electricity_consumption_total": 1.0
+        },
+        "board": {
+          "total_consumption_kwh": 251.935,
+          "power_cost_usd": 45.348,
+          "carbon_emission_kgco2": 105.813,
+          "peak_load_kw": 26.564,
+          "cumulative_reward": -290.929
+        },
+        "sarbc_kind": null,
+        "step_time_mean_s": 0.01,
+        "loads": [
+          18.37,
+          20.76,
+          17.95,
+          17.03,
+          20.17,
+          23.44,
+          26.56,
+          20.86,
+          14.58,
+          13.73,
+          10.15,
+          14.09,
+          17.49,
+          11.85,
+          4.9
+        ],
+        "steps": 15,
+        "wall_s": 1.4
+      },
+      "sarbc": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 0.989554153943206,
+          "grid_cost": 1.3699084830449038,
+          "resilience_cost": null,
+          "challenge_cost": 1.179731318494055,
+          "cost_total": 0.965018949416429,
+          "electricity_consumption_total": 0.9650189436913514
+        },
+        "board": {
+          "total_consumption_kwh": 245.494,
+          "power_cost_usd": 44.189,
+          "carbon_emission_kgco2": 103.108,
+          "peak_load_kw": 26.026,
+          "cumulative_reward": -283.466
+        },
+        "sarbc_kind": "sacrbc_trained",
+        "step_time_mean_s": 0.01,
+        "loads": [
+          1.46,
+          10.9,
+          17.88,
+          17.03,
+          20.45,
+          23.85,
+          26.03,
+          21.63,
+          16.46,
+          13.46,
+          16.27,
+          15.39,
+          19.78,
+          13.05,
+          11.86
+        ],
+        "steps": 15,
+        "wall_s": 2.3
+      },
+      "macro_v1": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 1.1360742748040962,
+          "grid_cost": 1.0310762381463616,
+          "resilience_cost": null,
+          "challenge_cost": 1.0835752564752288,
+          "cost_total": 1.1148736715986916,
+          "electricity_consumption_total": 1.114873672490988
+        },
+        "board": {
+          "total_consumption_kwh": 250.626,
+          "power_cost_usd": 45.113,
+          "carbon_emission_kgco2": 105.263,
+          "peak_load_kw": 25.314,
+          "cumulative_reward": -289.217
+        },
+        "sarbc_kind": null,
+        "step_time_mean_s": 35.49,
+        "loads": [
+          14.23,
+          12.27,
+          17.95,
+          15.38,
+          20.17,
+          22.54,
+          25.31,
+          19.71,
+          14.83,
+          25.19,
+          15.23,
+          16.69,
+          13.85,
+          7.39,
+          9.86
+        ],
+        "steps": 15,
+        "mesh_quality": {
+          "avg_conflict": 0.067,
+          "avg_consensus": 0.317,
+          "avg_mean_field_stddev": 0.041,
+          "avg_n_actions": 9.27
+        },
+        "wall_s": 533.6
+      },
+      "macro_v2": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 0.9301153090131954,
+          "grid_cost": 1.4507655900257115,
+          "resilience_cost": null,
+          "challenge_cost": 1.1904404495194534,
+          "cost_total": 0.9231584116378828,
+          "electricity_consumption_total": 0.9231584085219776
+        },
+        "board": {
+          "total_consumption_kwh": 233.374,
+          "power_cost_usd": 42.007,
+          "carbon_emission_kgco2": 98.017,
+          "peak_load_kw": 25.634,
+          "cumulative_reward": -269.125
+        },
+        "sarbc_kind": null,
+        "step_time_mean_s": 86.0,
+        "loads": [
+          18.37,
+          20.76,
+          1.77,
+          17.03,
+          19.86,
+          23.44,
+          25.63,
+          20.86,
+          14.58,
+          12.8,
+          9.94,
+          14.09,
+          17.49,
+          11.85,
+          4.9
+        ],
+        "steps": 15,
+        "mesh_quality": {
+          "avg_conflict": 0.867,
+          "avg_consensus": 0.279,
+          "avg_mean_field_stddev": 0.074,
+          "avg_n_actions": 1.87
+        },
+        "final_strategy_note": "reward_trend가 +10.779로 뚜렷하게 개선되고 있으며, 이번 validate에서 score 15.65→2.61로 peak shaving 효과가 재확인됨. SOC 안정성을 유지하면서 고net_load 빌딩(Building_1/2/4/11) 집중 방전(-0.55~-0.58)과 저SOC 빌딩(Building_3/7/10/13/16) 제한 방전(-0.",
+        "wall_s": 1291.3
+      }
+    },
+    "disturbance": {
+      "noctrl": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 0.999999999743073,
+          "grid_cost": 1.0000000566270866,
+          "resilience_cost": null,
+          "challenge_cost": 1.0000000281850798,
+          "cost_total": 1.0000000025789046,
+          "electricity_consumption_total": 1.0
+        },
+        "board": {
+          "total_consumption_kwh": 435.585,
+          "power_cost_usd": 78.405,
+          "carbon_emission_kgco2": 182.946,
+          "peak_load_kw": 63.294,
+          "cumulative_reward": -521.708
+        },
+        "sarbc_kind": null,
+        "step_time_mean_s": 0.01,
+        "loads": [
+          18.37,
+          20.76,
+          17.95,
+          17.03,
+          20.17,
+          60.17,
+          63.29,
+          57.59,
+          51.31,
+          50.46,
+          10.15,
+          14.09,
+          17.49,
+          11.85,
+          4.9
+        ],
+        "steps": 15,
+        "resilience": {
+          "shock_peak_kw": 63.29,
+          "shock_total_excess_kwh": 179.01,
+          "pre_shock_peak_kw": 20.76,
+          "recovery_steps": 1
+        },
+        "wall_s": 1.4
+      },
+      "sarbc": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 0.989554153943206,
+          "grid_cost": 1.3699084830449038,
+          "resilience_cost": null,
+          "challenge_cost": 1.179731318494055,
+          "cost_total": 0.965018949416429,
+          "electricity_consumption_total": 0.9650189436913514
+        },
+        "board": {
+          "total_consumption_kwh": 429.144,
+          "power_cost_usd": 77.246,
+          "carbon_emission_kgco2": 180.241,
+          "peak_load_kw": 62.756,
+          "cumulative_reward": -514.408
+        },
+        "sarbc_kind": "sacrbc_trained",
+        "step_time_mean_s": 0.01,
+        "loads": [
+          1.46,
+          10.9,
+          17.88,
+          17.03,
+          20.45,
+          60.58,
+          62.76,
+          58.36,
+          53.19,
+          50.19,
+          16.27,
+          15.39,
+          19.78,
+          13.05,
+          11.86
+        ],
+        "steps": 15,
+        "resilience": {
+          "shock_peak_kw": 62.76,
+          "shock_total_excess_kwh": 182.8,
+          "pre_shock_peak_kw": 20.45,
+          "recovery_steps": 1
+        },
+        "wall_s": 1.6
+      },
+      "macro_v1": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 1.09476441474625,
+          "grid_cost": 1.042361302351973,
+          "resilience_cost": null,
+          "challenge_cost": 1.0685628585491116,
+          "cost_total": 1.0717958118843551,
+          "electricity_consumption_total": 1.0717958099405485
+        },
+        "board": {
+          "total_consumption_kwh": 429.828,
+          "power_cost_usd": 77.369,
+          "carbon_emission_kgco2": 180.528,
+          "peak_load_kw": 63.044,
+          "cumulative_reward": -514.086
+        },
+        "sarbc_kind": null,
+        "step_time_mean_s": 39.1,
+        "loads": [
+          13.57,
+          15.91,
+          17.95,
+          13.03,
+          18.87,
+          52.98,
+          63.04,
+          57.59,
+          51.31,
+          51.92,
+          17.18,
+          17.76,
+          16.83,
+          16.25,
+          5.64
+        ],
+        "steps": 15,
+        "mesh_quality": {
+          "avg_conflict": 0.667,
+          "avg_consensus": 0.343,
+          "avg_mean_field_stddev": 0.042,
+          "avg_n_actions": 9.27
+        },
+        "resilience": {
+          "shock_peak_kw": 63.04,
+          "shock_total_excess_kwh": 182.48,
+          "pre_shock_peak_kw": 18.87,
+          "recovery_steps": 1
+        },
+        "wall_s": 587.7
+      },
+      "macro_v2": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 0.9413315960909424,
+          "grid_cost": 1.636713988371405,
+          "resilience_cost": null,
+          "challenge_cost": 1.2890227922311737,
+          "cost_total": 0.9328244472634115,
+          "electricity_consumption_total": 0.9328244442497019
+        },
+        "board": {
+          "total_consumption_kwh": 418.249,
+          "power_cost_usd": 75.285,
+          "carbon_emission_kgco2": 175.665,
+          "peak_load_kw": 63.294,
+          "cumulative_reward": -501.484
+        },
+        "sarbc_kind": null,
+        "step_time_mean_s": 74.03,
+        "loads": [
+          17.87,
+          20.76,
+          1.11,
+          17.03,
+          20.17,
+          60.17,
+          63.29,
+          57.59,
+          51.31,
+          50.46,
+          10.15,
+          14.09,
+          17.49,
+          11.85,
+          4.9
+        ],
+        "steps": 15,
+        "mesh_quality": {
+          "avg_conflict": 0.867,
+          "avg_consensus": 0.623,
+          "avg_mean_field_stddev": 0.044,
+          "avg_n_actions": 1.2
+        },
+        "resilience": {
+          "shock_peak_kw": 63.29,
+          "shock_total_excess_kwh": 179.01,
+          "pre_shock_peak_kw": 20.76,
+          "recovery_steps": 1
+        },
+        "final_strategy_note": "reward 추세가 +10.779로 뚜렷하게 개선(-20.18→-5.3)되고 있으며, 이번 step 검증에서 district net load 15.65→5.61(64.2% 감소)을 확인했다. SOC≥0.60 고SOC 건물(B2,B5,B8,B9,B11,B12,B14,B15)은 -0.60~-0.62 적극 방전으로 peak shaving을 유지하고, SOC 0.",
+        "wall_s": 1111.8
+      }
+    },
+    "building_add": {
+      "noctrl": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 0.9999999996340213,
+          "grid_cost": 1.0000000521560923,
+          "resilience_cost": null,
+          "challenge_cost": 1.0000000258950568,
+          "cost_total": 1.000000002047197,
+          "electricity_consumption_total": 1.0
+        },
+        "board": {
+          "total_consumption_kwh": 287.599,
+          "power_cost_usd": 51.768,
+          "carbon_emission_kgco2": 120.791,
+          "peak_load_kw": 30.138,
+          "cumulative_reward": -334.44
+        },
+        "sarbc_kind": null,
+        "step_time_mean_s": 0.01,
+        "loads": [
+          21.17,
+          24.2,
+          20.81,
+          19.98,
+          23.28,
+          26.6,
+          30.14,
+          22.97,
+          15.73,
+          14.71,
+          10.15,
+          16.25,
+          22.56,
+          14.16,
+          4.9
+        ],
+        "steps": 15,
+        "wall_s": 1.6
+      },
+      "sarbc": {
+        "error": "IndexError: list index out of range"
+      },
+      "macro_v1": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 1.334582282167493,
+          "grid_cost": 1.1989380407076364,
+          "resilience_cost": null,
+          "challenge_cost": 1.2667601614375648,
+          "cost_total": 1.3009839828802974,
+          "electricity_consumption_total": 1.3009839794556655
+        },
+        "board": {
+          "total_consumption_kwh": 314.851,
+          "power_cost_usd": 56.673,
+          "carbon_emission_kgco2": 132.237,
+          "peak_load_kw": 30.41,
+          "cumulative_reward": -367.807
+        },
+        "sarbc_kind": null,
+        "step_time_mean_s": 38.77,
+        "loads": [
+          15.64,
+          17.49,
+          20.08,
+          19.58,
+          23.28,
+          26.35,
+          28.64,
+          22.47,
+          15.73,
+          27.55,
+          7.13,
+          30.41,
+          30.14,
+          22.17,
+          8.21
+        ],
+        "steps": 15,
+        "mesh_quality": {
+          "avg_conflict": 0.067,
+          "avg_consensus": 0.418,
+          "avg_mean_field_stddev": 0.028,
+          "avg_n_actions": 10.67
+        },
+        "wall_s": 583.1
+      },
+      "macro_v2": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 0.9423482239865485,
+          "grid_cost": 1.5121150397619911,
+          "resilience_cost": null,
+          "challenge_cost": 1.2272316318742698,
+          "cost_total": 0.9337125896887217,
+          "electricity_consumption_total": 0.9337125868516198
+        },
+        "board": {
+          "total_consumption_kwh": 267.874,
+          "power_cost_usd": 48.217,
+          "carbon_emission_kgco2": 112.507,
+          "peak_load_kw": 30.138,
+          "cumulative_reward": -311.256
+        },
+        "sarbc_kind": null,
+        "step_time_mean_s": 77.3,
+        "loads": [
+          21.17,
+          24.2,
+          1.41,
+          19.98,
+          22.95,
+          26.6,
+          30.14,
+          22.97,
+          15.73,
+          14.71,
+          10.15,
+          16.25,
+          22.56,
+          14.16,
+          4.9
+        ],
+        "steps": 15,
+        "mesh_quality": {
+          "avg_conflict": 0.867,
+          "avg_consensus": 0.675,
+          "avg_mean_field_stddev": 0.088,
+          "avg_n_actions": 1.27
+        },
+        "final_strategy_note": "reward 추세가 +13.374로 뚜렷하게 개선되고 있으며, 이번 step에서도 district net load를 15.65→2.73으로 대폭 감소시키는 데 성공했다. 고SOC(≥0.60) 빌딩은 -0.62~-0.65의 공격적 방전을 유지하고, 중간SOC(0.50~0.59)는 -0.50~-0.52로 안정적 방전, 저SOC(≤0.49)는 -0.20으로 엄격",
+        "wall_s": 1161.0
+      }
+    }
+  }
+}
