@@ -39,6 +39,10 @@ cd backend
 if [ "${SEED_DB:-0}" = "1" ]; then
   echo "==> Seeding database..."
   "${BE_SEED[@]}"
+  echo "==> Seeding notices (도시관리 + 사내 공지)..."
+  uv run python ../seed_notices.py
+  echo "==> Seeding trust data (정책/인증)..."
+  uv run python ../seed_trust.py
 fi
 cd ..
 

@@ -315,3 +315,36 @@
 - **Known risk or unresolved issue**:
   - 실시간 업데이트는 현재 WebSocket/SSE가 아니라 API 요청 후 재조회 방식이다. Goal별 SSE 스트림은 후속 실시간 단계에서 분리 구현 필요.
 - **Next best step**: `PH3-ui-creator-002` — 시나리오 기반 시뮬레이션 환경(Sandbox)
+
+---
+
+## 세션 로그 — 2026-06-03 (최종발표 준비: 홈 공지 / 신뢰관리 / 운영관리)
+
+- **작업 범위**: 홈 화면 공지 시스템 고도화 + 신뢰 관리(Trust) / 운영 관리(Operations) 최소 기능 구현.
+  워크스페이스·크리에이터(UI/UX 및 백엔드)는 일절 변경하지 않음.
+- **홈 공지**:
+  - `notices` 테이블에 `category`/`priority`/`pinned` 추가 (migration `012_notice_enrich`)
+  - 모델/스키마/API 확장, GET 정렬을 고정공지 → 우선순위(critical>high>normal) → 최신순으로 변경
+  - `seed_notices.py`를 도시 전력관리 시스템 운영 공지(피크경보/그리드 배포/운영리포트) + 사내 공지
+    (거버넌스/릴리스/시스템점검/보안/교육)로 교체 (활성 8건)
+  - `DashboardPage`: 카테고리 뱃지·우선순위 표시·고정 핀·더보기, 통계 카드를 운영/신뢰 실데이터로 연동,
+    시스템 상태를 `/operations/health`로 연동
+- **신뢰 관리 (`/dashboard/trust`)**:
+  - backend `app/api/v1/trust.py` + `app/schemas/trust.py`: overview / 에이전트 신뢰현황 / 정책 CRUD+상태 /
+    인증 CRUD+상태 / 에이전트-정책·인증 연결·해제. 쓰기는 governance·trust_ops 권한.
+  - frontend `api/trust.ts`, `pages/TrustPage.tsx`(현황/정책/인증 탭 + 연결 관리 모달)
+  - `seed_trust.py`: 정책 5건·인증 5건 적재 후 에이전트 연결 (certified/partial/unverified 분포)
+- **운영 관리 (`/dashboard/operator`)**:
+  - backend `app/api/v1/operations.py` + `app/schemas/operations.py`: overview / 에이전트 라이프사이클 목록 /
+    상태 변경(release_manager·trust_ops) / 최근 활동 로그 / 시스템 상태
+  - frontend `api/operations.ts`, `pages/OperationsPage.tsx`(요약·에이전트 상태관리·시스템상태·활동로그)
+- **라우팅**: `App.tsx`의 trust/operator 플레이스홀더 제거 → 실제 페이지 연결, `main.py`에 라우터 등록
+- **Verification run**:
+  - ✅ `uv run alembic upgrade head` (012 적용)
+  - ✅ `uv run python ../seed_notices.py` / `../seed_trust.py`
+  - ✅ `uv run python -c "from app.main import app"` (68 routes)
+  - ✅ e2e: 정책 생성/활성화/연결, 인증, 에이전트 상태 변경 모두 정상; evaluator 쓰기 403, 읽기 200
+  - ✅ `npm run build` (871 modules) / `npx tsc --noEmit` 무오류
+- **`init.sh`**: SEED_DB=1 시 notices·trust 시드 자동 실행 추가
+- **Commits**: 미커밋
+- **Next best step**: 운영 활동 로그용 interactions 시드(선택), 공지 작성 UI(거버넌스용) 추가 검토

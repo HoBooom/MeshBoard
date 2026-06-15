@@ -1,12 +1,15 @@
 /**
  * MeshBoard — Dashboard Home Page
  *
- * 역할에 따라 다른 위젯/카드를 표시하는 홈 대시보드.
+ * 홈 대시보드: 도시 전력 관리 시스템 운영 공지 + 사내 공지 피드,
+ * 실시간 운영/신뢰 지표, 시스템 상태를 한눈에 제공합니다.
  */
 
 import { useEffect, useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
-import { noticesApi, Notice } from '../api/notices';
+import { noticesApi, Notice, NoticeCategory, NoticePriority } from '../api/notices';
+import { operationsApi, OperationsOverview, HealthComponent } from '../api/operations';
+import { trustApi, TrustOverview } from '../api/trust';
 
 const roleLabels: Record<string, string> = {
   agent_owner: '에이전트 소유자',
@@ -28,77 +31,82 @@ const roleBadgeColors: Record<string, string> = {
   release_manager: 'bg-teal-500/20 text-teal-400 border-teal-500/30',
 };
 
-interface StatCard {
-  label: string;
-  value: string;
-  change: string;
-  icon: React.ReactNode;
-  trend: 'up' | 'down' | 'neutral';
+const categoryMeta: Record<NoticeCategory, { label: string; cls: string }> = {
+  city: { label: '도시운영', cls: 'bg-sky-500/15 text-sky-400 border-sky-500/30' },
+  system: { label: '시스템', cls: 'bg-slate-400/15 text-slate-300 border-slate-400/25' },
+  governance: { label: '거버넌스', cls: 'bg-purple-500/15 text-purple-300 border-purple-500/30' },
+  release: { label: '릴리스', cls: 'bg-teal-500/15 text-teal-300 border-teal-500/30' },
+  security: { label: '보안', cls: 'bg-rose-500/15 text-rose-300 border-rose-500/30' },
+  general: { label: '일반', cls: 'bg-white/10 text-white/60 border-white/15' },
+};
+
+const priorityMeta: Record<NoticePriority, { label: string; dot: string } | null> = {
+  critical: { label: '긴급', dot: 'bg-[#ff453a]' },
+  high: { label: '중요', dot: 'bg-amber-400' },
+  normal: null,
+};
+
+function PinIcon() {
+  return (
+    <svg className="w-3.5 h-3.5 text-apple-link" fill="currentColor" viewBox="0 0 24 24">
+      <path d="M16 9V4h1a1 1 0 100-2H7a1 1 0 000 2h1v5a3 3 0 01-3 3v1h5.5v6l1 1 1-1v-6H19v-1a3 3 0 01-3-3z" />
+    </svg>
+  );
 }
 
 export default function DashboardPage() {
   const { user, fetchUser } = useAuthStore();
   const [notices, setNotices] = useState<Notice[]>([]);
+  const [ops, setOps] = useState<OperationsOverview | null>(null);
+  const [trust, setTrust] = useState<TrustOverview | null>(null);
+  const [health, setHealth] = useState<HealthComponent[]>([]);
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     if (!user) {
       fetchUser();
-    } else {
-      noticesApi.getNotices().then(setNotices).catch(console.error);
+      return;
     }
+    noticesApi.getNotices().then(setNotices).catch(console.error);
+    operationsApi.getOverview().then(setOps).catch(console.error);
+    operationsApi.getHealth().then(setHealth).catch(console.error);
+    trustApi.getOverview().then(setTrust).catch(console.error);
   }, [user, fetchUser]);
 
-  // 역할별 통계 카드 (초기에는 Mock 데이터)
-  const statsCards: StatCard[] = [
+  const visibleNotices = expanded ? notices : notices.slice(0, 4);
+
+  const statsCards = [
     {
       label: '등록된 에이전트',
-      value: '—',
-      change: 'Phase 2에서 활성화',
-      trend: 'neutral',
-      icon: (
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-        </svg>
-      ),
+      value: ops ? String(ops.total_agents) : '—',
+      change: ops ? `운영 중 ${ops.status_breakdown.ACTIVE} · 초안 ${ops.status_breakdown.DRAFT}` : '집계 중',
     },
     {
-      label: '활성 워크스페이스',
-      value: '—',
-      change: 'Phase 3에서 활성화',
-      trend: 'neutral',
-      icon: (
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-        </svg>
-      ),
+      label: '인증 완료 에이전트',
+      value: trust ? String(trust.certified_agents) : '—',
+      change: trust ? `심사 대기 ${trust.pending_certifications}건` : '집계 중',
     },
     {
-      label: '오늘 상호작용',
-      value: '—',
-      change: 'Phase 3에서 활성화',
-      trend: 'neutral',
-      icon: (
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-        </svg>
-      ),
+      label: '24시간 실행',
+      value: ops ? String(ops.interactions_24h) : '—',
+      change: ops ? `실행 성공률 ${ops.success_rate}%` : '집계 중',
     },
     {
-      label: '적용 정책',
-      value: '—',
-      change: 'Phase 3에서 활성화',
-      trend: 'neutral',
-      icon: (
-        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-        </svg>
-      ),
+      label: '활성 정책',
+      value: trust ? String(trust.active_policies) : '—',
+      change: trust ? `초안 ${trust.draft_policies}건` : '집계 중',
     },
   ];
 
+  const healthDot: Record<string, string> = {
+    online: 'bg-[#34c759]',
+    degraded: 'bg-amber-400',
+    offline: 'bg-[#ff3b30]',
+  };
+
   return (
     <div className="space-y-8 animate-fade-in">
-      {/* Welcome Header - Apple Style */}
+      {/* Welcome Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between font-apple pb-8 border-b border-surface-800">
         <div>
           <h1 className="text-[40px] md:text-[56px] font-semibold text-white tracking-[-0.28px] leading-[1.07] mb-2">
@@ -122,47 +130,76 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Notices Section - Apple Style */}
+      {/* Notices Section */}
       {notices.length > 0 && (
-        <div className="font-apple space-y-4 mb-12">
-          {notices.map((notice) => (
-            <div key={notice.notice_id} className="bg-apple-surface1 rounded-[12px] p-6 text-white shadow-[0_5px_30px_rgba(0,0,0,0.22)]">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-[21px] font-semibold tracking-[0.231px] leading-[1.19]">
-                  {notice.title}
-                </h3>
-                <span className="text-[12px] font-medium text-white/50 tracking-[-0.12px]">
-                  {new Date(notice.created_at).toLocaleDateString('ko-KR')}
-                </span>
-              </div>
-              {notice.body && (
-                <p className="text-[17px] font-normal text-white/80 tracking-[-0.374px] leading-[1.47] mt-3">
-                  {notice.body}
-                </p>
-              )}
-              <div className="mt-5">
-                <a href="#" className="inline-flex items-center text-[14px] text-apple-link hover:underline tracking-[-0.224px]">
-                  자세히 알아보기 <span className="ml-1 text-[10px]">❯</span>
-                </a>
-              </div>
-            </div>
-          ))}
+        <div className="font-apple">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-[24px] font-semibold text-white tracking-[0.231px] flex items-center gap-2">
+              공지사항
+              <span className="text-[14px] font-normal text-white/40">{notices.length}건</span>
+            </h2>
+          </div>
+          <div className="space-y-3">
+            {visibleNotices.map((notice) => {
+              const cat = categoryMeta[notice.category] ?? categoryMeta.general;
+              const prio = priorityMeta[notice.priority];
+              return (
+                <div
+                  key={notice.notice_id}
+                  className={`bg-apple-surface1 rounded-[12px] p-5 text-white shadow-[0_5px_30px_rgba(0,0,0,0.22)] border-l-2 ${
+                    notice.priority === 'critical'
+                      ? 'border-[#ff453a]'
+                      : notice.priority === 'high'
+                      ? 'border-amber-400'
+                      : 'border-transparent'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                        {notice.pinned && <PinIcon />}
+                        <span className={`px-2 py-0.5 text-[11px] font-medium rounded-md border ${cat.cls}`}>
+                          {cat.label}
+                        </span>
+                        {prio && (
+                          <span className="flex items-center gap-1 text-[11px] font-medium text-white/70">
+                            <span className={`w-1.5 h-1.5 rounded-full ${prio.dot}`} />
+                            {prio.label}
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-[17px] font-semibold tracking-[-0.2px] leading-[1.3]">
+                        {notice.title}
+                      </h3>
+                      {notice.body && (
+                        <p className="text-[14px] font-normal text-white/60 tracking-[-0.2px] leading-[1.55] mt-2">
+                          {notice.body}
+                        </p>
+                      )}
+                    </div>
+                    <span className="text-[12px] font-medium text-white/40 tracking-[-0.12px] whitespace-nowrap flex-shrink-0">
+                      {new Date(notice.created_at).toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {notices.length > 4 && (
+            <button
+              onClick={() => setExpanded((v) => !v)}
+              className="mt-4 text-[14px] text-apple-link hover:underline tracking-[-0.224px]"
+            >
+              {expanded ? '접기' : `공지 ${notices.length - 4}건 더 보기`}
+            </button>
+          )}
         </div>
       )}
 
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
-        {statsCards.map((card, index) => (
-          <div
-            key={card.label}
-            className="glass-card p-6"
-            style={{ animationDelay: `${index * 100}ms` }}
-          >
-            <div className="flex items-start justify-between mb-4">
-              <div className="w-12 h-12 rounded-[12px] bg-apple-surface2 flex items-center justify-center text-apple-blue">
-                {card.icon}
-              </div>
-            </div>
+        {statsCards.map((card) => (
+          <div key={card.label} className="glass-card p-6">
             <p className="text-[28px] font-semibold text-white mb-1 tracking-[0.196px] leading-[1.14]">{card.value}</p>
             <p className="text-[14px] text-white/50 tracking-[-0.224px]">{card.label}</p>
             <p className="text-[12px] text-white/30 mt-2 tracking-[-0.12px]">{card.change}</p>
@@ -170,26 +207,21 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* Quick Actions based on role */}
+      {/* System Status + User Info */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-        {/* System Status */}
         <div className="glass-card p-6">
           <h3 className="text-[21px] font-semibold text-white mb-4 flex items-center gap-2 tracking-[0.231px]">
             <div className="w-2 h-2 rounded-[50%] bg-[#34c759] animate-pulse" />
             시스템 상태
           </h3>
           <div className="space-y-3">
-            {[
-              { name: 'API 서버', status: 'online', detail: 'FastAPI v0.1.0' },
-              { name: 'PostgreSQL', status: 'online', detail: 'pgvector/pg15' },
-              { name: '메시지 브로커', status: 'pending', detail: 'Phase 3에서 구현 예정' },
-              { name: 'Agent Runtime', status: 'pending', detail: 'Phase 3에서 구현 예정' },
-            ].map((service) => (
+            {(health.length > 0
+              ? health
+              : [{ name: 'API 서버', status: 'online', detail: 'FastAPI v0.1.0' }]
+            ).map((service) => (
               <div key={service.name} className="flex items-center justify-between py-2 border-b border-white/5 last:border-0">
                 <div className="flex items-center gap-3">
-                  <div className={`w-2 h-2 rounded-[50%] ${
-                    service.status === 'online' ? 'bg-[#34c759]' : 'bg-white/20'
-                  }`} />
+                  <div className={`w-2 h-2 rounded-[50%] ${healthDot[service.status] ?? 'bg-white/20'}`} />
                   <span className="text-[14px] font-medium text-white/80 tracking-[-0.224px]">{service.name}</span>
                 </div>
                 <span className="text-[12px] text-white/50 tracking-[-0.12px]">{service.detail}</span>
@@ -198,7 +230,6 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* User Info Card */}
         <div className="glass-card p-6">
           <h3 className="text-[21px] font-semibold text-white tracking-[0.231px] mb-4">내 정보</h3>
           {user && (
@@ -237,20 +268,6 @@ export default function DashboardPage() {
             </div>
           )}
         </div>
-      </div>
-
-      {/* Coming Soon */}
-      <div className="glass-card p-10 text-center mt-8">
-        <div className="w-16 h-16 mx-auto mb-4 rounded-[12px] bg-apple-surface2 flex items-center justify-center">
-          <svg className="w-8 h-8 text-apple-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
-          </svg>
-        </div>
-        <h3 className="text-[21px] font-semibold text-white tracking-[0.231px] mb-2">더 많은 기능이 곧 추가됩니다</h3>
-        <p className="text-[17px] font-normal text-white/50 tracking-[-0.374px] leading-[1.47] max-w-lg mx-auto">
-          공지 시스템, 마켓플레이스, 에이전트 크리에이터, 토폴로지 맵 등
-          다양한 기능이 Phase별로 구현될 예정입니다.
-        </p>
       </div>
     </div>
   );
