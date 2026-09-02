@@ -1,6 +1,6 @@
 {
   "project": "MeshBoard",
-  "last_updated": "2026-04-28",
+  "last_updated": "2026-09-02",
   "rules": {
     "single_active_feature": true,
     "passing_requires_evidence": true,
@@ -17,8 +17,8 @@
       "id": "PH1-auth-001",
       "priority": 1,
       "area": "foundation",
-      "title": "기업 IdP 연동 및 RBAC 기반 로그인",
-      "user_visible_behavior": "사용자가 기업 계정으로 로그인하면 일반사용자/개발자/운영자/거버넌스팀 역할에 맞는 홈 대시보드로 리다이렉트 된다.",
+      "title": "JWT 기반 RBAC 로그인 및 OIDC provider boundary",
+      "user_visible_behavior": "사용자가 로그인하면 일반사용자/개발자/운영자/거버넌스팀 역할에 맞는 홈 대시보드로 리다이렉트 된다. 현재 OIDC provider는 mock 구현이다.",
       "status": "passing",
       "verification": [
         "✅ [2026-04-24] 1. 테스트용 OAuth2 모킹 서버를 실행한다.",
@@ -26,7 +26,7 @@
         "✅ [2026-04-24] 3. 권한이 없는 API 호출 시 403 Forbidden 에러가 발생하는지 확인한다."
       ],
       "evidence": [],
-      "notes": "USERS, USER_ROLES 테이블 마이그레이션 필수. OIDC 추상화 레이어 적용."
+      "notes": "USERS, USER_ROLES 테이블과 OIDC 추상화 레이어 적용. 실제 기업 IdP adapter는 후속 범위이며 현재 완료 주장에 포함하지 않는다."
     },
     {
       "id": "PH1-db-001",
@@ -133,7 +133,8 @@
         "✅ `cd backend && uv run python - <<'PY' ... fake LLM LangGraph invoke, interrupt, resume verified ... PY` 통과",
         "✅ `cd backend && uv run python - <<'PY' ... MCP tool descriptors verified: 5 tools ... PY` 통과",
         "✅ `python -m json.tool feature_list.json >/dev/null` 통과",
-        "✅ `cd frontend && npm run build` 통과"
+        "✅ `cd frontend && npm run build` 통과",
+        "✅ [2026-09-02] 등록된 에이전트 도구 allow-list를 tool node에서 강제하고, 동일 모델/도구 조합의 CompiledGraph 재사용 테스트 통과"
       ],
       "notes": "기존 ChatCompletions 루프를 LangGraph 노드로 전환. 에이전트 하나가 하나의 CompiledGraph가 됨."
     },
@@ -443,7 +444,7 @@
         "2. 인증 발급(CERTIFICATIONS) 시 에이전트 카드에 신뢰 마크 렌더링 확인"
       ],
       "evidence": [],
-      "notes": "정책은 OPA(Open Policy Agent) 호환 JSON 구조로 저장."
+      "notes": "정책/인증 CRUD와 Trust UI baseline은 존재한다. 그러나 정책 템플릿 검증 및 런타임 enforcement, 마켓플레이스 카드의 인증 표시 acceptance criteria가 완료되지 않아 not_started를 유지한다."
     },
     {
       "id": "PH3-ui-operator-001",
@@ -457,7 +458,7 @@
         "2. 상태 변경 이벤트가 이벤트 버스를 통해 전파되어 동작을 즉각 중지하는지 확인"
       ],
       "evidence": [],
-      "notes": "비상 스위치(Kill-switch) 역할."
+      "notes": "운영 현황과 상태 변경 API/UI baseline은 존재한다. 그러나 실행 중 작업을 이벤트 버스로 즉시 중단하는 kill-switch enforcement가 없어 not_started를 유지한다."
     },
     {
       "id": "PH3-ui-operator-002",

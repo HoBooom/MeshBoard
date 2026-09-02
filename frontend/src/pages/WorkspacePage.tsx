@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -233,6 +233,7 @@ const MESH_CHESCA_SCENARIO_FALLBACK: Array<{ id: string; label: string; descript
   { id: 'reserve_contract_mesh', label: 'Reserve Contract Mesh', description: 'outage reserve 보존 협상' },
   { id: 'commitment_mesh', label: 'Commitment Mesh', description: '과방전 debt/budget ledger' },
   { id: 'round_robin_commitment', label: 'Round-Robin Coordinator', description: 'planner 소유권 회전' },
+  { id: 'outage_mpc_mesh', label: 'OpenSynCity 정전 MPC Mesh', description: '정전 회복력 MPC mesh (CityLearn 2022 + 정전 주입)' },
 ];
 
 const CITYLEARN_DATASET_ID = 'citylearn_challenge_2022_phase_all';
@@ -1120,6 +1121,17 @@ export default function WorkspacePage() {
       setToolCatalog([]);
     }
   };
+
+  const refreshWorkspaceDetail = useCallback(async () => {
+    const workspaceId = detail?.workspace_id;
+    if (!workspaceId) return;
+    try {
+      const fresh = await workspacesApi.get(workspaceId);
+      setDetail(fresh);
+    } catch (err) {
+      console.warn('detail refresh failed after mesh publish', err);
+    }
+  }, [detail?.workspace_id]);
 
   const openJoinWorkspace = async () => {
     setJoinOpen(true);
@@ -3622,6 +3634,7 @@ export default function WorkspacePage() {
 	                isMeshChesca={meshChescaWorkspace}
 	                meshChescaScenario={meshChescaScenario}
 	                onMeshChescaScenarioChange={setMeshChescaScenario}
+	                onDetailRefresh={refreshWorkspaceDetail}
 	              />
             ) : (
               <div className="min-h-0 flex-1 bg-[#eef0f4] p-4">
@@ -4609,6 +4622,16 @@ function MeshChescaPanel({
           {typeof neg.total_debt_soc === 'number' && (
             <KV label="Total debt (SOC)" value={`${neg.total_debt_soc.toFixed(3)}`} />
           )}
+          {/* outage_mpc_mesh 전용: 정전 위험/예비/긴급방전 */}
+          {typeof neg.outage_risk === 'number' && (
+            <KV label="Outage risk" value={neg.outage_risk > 0 ? 'HIGH' : 'low'} tone={neg.outage_risk > 0 ? 'red' : 'green'} />
+          )}
+          {typeof neg.reserve_floor === 'number' && (
+            <KV label="Reserve floor (SOC)" value={`${neg.reserve_floor.toFixed(2)}`} tone={neg.reserve_floor > 0 ? 'red' : undefined} />
+          )}
+          {typeof neg.emergency_deploy === 'number' && neg.emergency_deploy > 0 && (
+            <KV label="Emergency discharge" value={`${neg.emergency_deploy} bldg`} tone="red" />
+          )}
           <KV label="District target" value={`${neg.district_target.toFixed(2)}`} />
           <KV label="Msgs (logical)" value={`${neg.logical_message_count}`} />
         </div>
@@ -4633,6 +4656,49 @@ function MeshChescaPanel({
                   {typeof p.debt_soc === 'number' && (
                     <span className="text-[#b35d00]">debt {p.debt_soc.toFixed(2)}</span>
                   )}
+                  {p.outage && (
+                    <span className="rounded-full bg-[#ff453a]/14 px-1.5 py-0.5 text-[10px] font-semibold text-[#b42318]">정전</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* outage_mpc_mesh 전용: 에이전트 자연어 소통 트레이스 (노트북 step_reports 재현). */}
+      {(mesh.agent_reports?.length ?? 0) > 0 && (
+        <div className="mt-3 border-t border-black/[0.06] pt-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-black/42">에이전트 자연어 소통 · step {step + 1}</p>
+          <ul className="mt-1.5 flex max-h-56 flex-col gap-1 overflow-y-auto pr-1">
+            {mesh.agent_reports!.map((r, i) => {
+              const isRisk = r.agent === 'outage_risk_agent';
+              const isLead = r.agent.endsWith('_agent') && !isRisk;
+              const isBuilding = r.agent.startsWith('building_');
+              const name = isBuilding ? `Building_${Number(r.agent.split('_')[1]) + 1}` : r.agent;
+              const tag = isRisk ? 'outage' : isLead ? r.role : (r.role_ko || r.role);
+              return (
+                <li
+                  key={`rep-${i}-${r.agent}`}
+                  className={`flex items-start gap-2 rounded-[8px] px-2 py-1 text-[11px] leading-4 ${
+                    isRisk
+                      ? (r.reserve_floor && r.reserve_floor > 0 ? 'bg-[#ff453a]/8 text-[#b42318]' : 'bg-[#34c759]/8 text-[#248a3d]')
+                      : isLead
+                        ? 'bg-[#0071e3]/6 text-[#005bb5]'
+                        : r.outage
+                          ? 'bg-[#ff453a]/8 text-[#b42318]'
+                          : 'text-black/65'
+                  }`}
+                >
+                  <span className="shrink-0 font-semibold text-[#1d1d1f]">{name}</span>
+                  <span className="shrink-0 rounded-full bg-black/[0.05] px-1.5 py-0.5 text-[10px] font-medium text-black/55">{tag}</span>
+                  {r.llm && (
+                    <span className="shrink-0 rounded-full bg-[#5e5ce6]/14 px-1.5 py-0.5 text-[10px] font-semibold text-[#4b48c7]" title="로컬 Qwen 생성">Qwen</span>
+                  )}
+                  <span className="min-w-0 flex-1">{r.reason}</span>
+                  {r.outage && (
+                    <span className="shrink-0 rounded-full bg-[#ff453a]/14 px-1.5 py-0.5 text-[10px] font-semibold text-[#b42318]">⚡정전</span>
+                  )}
                 </li>
               );
             })}
@@ -4656,6 +4722,7 @@ function CityLearnBoardView({
   isMeshChesca = false,
   meshChescaScenario = 'chesca_mesh',
   onMeshChescaScenarioChange,
+  onDetailRefresh,
 }: {
   detail: WorkspaceDetail;
   simulation: CityLearnSimulationState;
@@ -4669,6 +4736,7 @@ function CityLearnBoardView({
   isMeshChesca?: boolean;
   meshChescaScenario?: string;
   onMeshChescaScenarioChange?: (scenario: string) => void;
+  onDetailRefresh?: () => void | Promise<void>;
 }) {
   const setUseLLMPlanner = onUseLLMPlannerChange;
   const [meshChesca, setMeshChesca] = useState<MeshChescaBoardSnapshot['mesh_chesca'] | null>(null);
@@ -4683,6 +4751,8 @@ function CityLearnBoardView({
   const [heatmapCompareMode, setHeatmapCompareMode] = useState<CityLearnHeatmapCompareMode>('agent_mesh');
   const [boardSnapshot, setBoardSnapshot] = useState<CityLearnBoardSnapshot | null>(null);
   const [boardSnapshotError, setBoardSnapshotError] = useState<string | null>(null);
+  // outage_mpc_mesh: 같은 (scenario, step)을 중복 발행하지 않도록 마지막 발행 키를 기억.
+  const lastPublishedRef = useRef<string>('');
   const simulationStep = simulation.step;
   const chartData = boardSnapshot?.points || buildCityLearnPowerWindow(simulationStep, baselineModel, agentMeshMode);
   const metrics = cityLearnMetrics(chartData);
@@ -4711,18 +4781,36 @@ function CityLearnBoardView({
   useEffect(() => {
     let cancelled = false;
 
-    // mesh_chesca 템플릿: 실제 CHESCA 런타임을 시나리오별로 구동하는 전용 endpoint 사용.
+    // mesh_chesca 템플릿: 실제 런타임을 시나리오별로 구동하는 전용 endpoint 사용.
     if (isMeshChesca) {
       const controller = new AbortController();
-      meshChescaApi.getBoard(
-        { step: simulationStep, scenario: meshChescaScenario, dataset: MESH_CHESCA_DATASET, window: 72 },
-        { signal: controller.signal },
-      )
-        .then((snapshot) => {
+      // outage_mpc_mesh는 publish endpoint로 board snapshot을 받으면서 에이전트 자연어 소통을
+      // 메시징 페이지 피드로 발행한다. 같은 step 중복 발행은 ref로 막는다.
+      const isOutageMpc = meshChescaScenario === 'outage_mpc_mesh';
+      const publishKey = `${meshChescaScenario}:${simulationStep}`;
+      const shouldPublish = isOutageMpc && lastPublishedRef.current !== publishKey;
+
+      const fetchPromise = shouldPublish
+        ? meshChescaApi.publishBoard(
+            { workspace_id: detail.workspace_id, step: simulationStep, scenario: meshChescaScenario, window: 72 },
+            { signal: controller.signal },
+          )
+        : meshChescaApi.getBoard(
+            { step: simulationStep, scenario: meshChescaScenario, dataset: MESH_CHESCA_DATASET, window: 72 },
+            { signal: controller.signal },
+          );
+
+      fetchPromise
+        .then(async (snapshot) => {
           if (cancelled) return;
           setBoardSnapshot(snapshot as unknown as CityLearnBoardSnapshot);
           setMeshChesca(snapshot.mesh_chesca);
           setBoardSnapshotError(null);
+          if (shouldPublish) {
+            lastPublishedRef.current = publishKey;
+            // 발행된 메시지를 메시징 페이지/토폴로지에 반영하기 위해 detail 재조회.
+            await onDetailRefresh?.();
+          }
         })
         .catch((error) => {
           if (cancelled) return;
@@ -4765,7 +4853,15 @@ function CityLearnBoardView({
     return () => {
       cancelled = true;
     };
-  }, [agentMeshMode, baselineModel, simulationStep, isMeshChesca, meshChescaScenario]);
+  }, [
+    agentMeshMode,
+    baselineModel,
+    detail.workspace_id,
+    isMeshChesca,
+    meshChescaScenario,
+    onDetailRefresh,
+    simulationStep,
+  ]);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto bg-[#eef0f4] p-4">

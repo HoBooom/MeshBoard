@@ -55,4 +55,9 @@ app.include_router(operations_router, prefix="/api/v1")
 @app.get("/health")
 async def health_check():
     """서비스 상태 확인."""
-    return {"status": "healthy", "service": "MeshBoard API"}
+    return {
+        "status": "healthy",
+        "service": "MeshBoard API",
+        "version": app.version,
+        "environment": settings.ENVIRONMENT,
+    }

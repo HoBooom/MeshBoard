@@ -1,6 +1,40 @@
+# Local configuration and secrets
 .env
-./backend/.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+*.egg-info/
+build/
 
-./Final_mesh1-main/
+# Node / frontend build output
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+coverage/
 
+# IDE and local agent settings
+.idea/
+.vscode/
+.claude/settings.local.json
+*.code-workspace
+
+# OS and temporary files
+.DS_Store
+._*
+*.log
+*.tmp
+*.swp

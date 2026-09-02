@@ -1,14 +1,15 @@
 """
 MeshBoard — Agent-Mesh Message Broker
 
-PH3-mesh-001 범위의 동기식 발행 브로커입니다. 이 단계에서는 메시지를
-MESSAGE_HEADERS 에 기록하고, 이후 PH3-mesh-002 라우팅/큐 처리 단계에서
-구독 규칙 평가와 receipt 생성을 붙일 수 있도록 얇은 서비스 경계를 둡니다.
+메시지를 저장하고 direct mention/subscription edge를 평가해 receipt를 생성합니다.
+에이전트 fan-out은 요청 안에서 완료되지만 동시성과 개별 timeout을 제한합니다.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 from datetime import datetime, timezone
 from typing import Optional
@@ -17,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.agent import Agent
+from app.core.config import settings
 from app.models.message import Message, MessageHeader, MessageReceipt
 from app.models.workspace import WorkspaceAgent, WorkspaceEdge, WorkspaceNode
 from app.schemas.message import PublishMessageRequest
@@ -24,6 +26,16 @@ from app.services.agent_runtime import AGENT_INVALID_RESPONSE_MESSAGE, invoke_ag
 
 
 MENTION_RE = re.compile(r"(?<!\S)@([^\s@]+)")
+logger = logging.getLogger(__name__)
+
+
+async def _invoke_routed_agent(agent_invoker, agent: Agent, user_message: str, semaphore) -> dict:
+    """Bound broker fan-out so one message cannot exhaust LLM connections."""
+    async with semaphore:
+        return await asyncio.wait_for(
+            agent_invoker(agent=agent, user_message=user_message),
+            timeout=settings.AGENT_INVOKE_TIMEOUT_SECONDS,
+        )
 
 
 def build_inline_body_ref(payload: dict) -> str:
@@ -233,10 +245,20 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
         )
     )
 
-    workspace_agent_ids = list(
+    all_workspace_agent_ids = list(
         (
             await db.execute(
                 select(WorkspaceAgent.agent_id).where(WorkspaceAgent.workspace_id == header.workspace_id)
+            )
+        ).scalars().all()
+    )
+    workspace_agent_ids = list(
+        (
+            await db.execute(
+                select(Agent.agent_id).where(
+                    Agent.agent_id.in_(all_workspace_agent_ids),
+                    Agent.status == "ACTIVE",
+                )
             )
         ).scalars().all()
     )
@@ -312,6 +334,7 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
         }
         user_message = _message_text_from_body_ref(header.body_ref)
 
+        invocation_targets = []
         for agent_id in matched_agent_ids:
             agent = agents.get(agent_id)
             agent_node = agent_nodes.get(agent_id)
@@ -320,16 +343,29 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
 
             agent_node.status = "processing"
             agent_node.updated_at = datetime.now(timezone.utc)
-            await db.flush()
+            invocation_targets.append((agent, agent_node))
+        await db.flush()
 
+        semaphore = asyncio.Semaphore(settings.AGENT_INVOKE_MAX_CONCURRENCY)
+        invocation_results = await asyncio.gather(
+            *(
+                _invoke_routed_agent(agent_invoker, agent, user_message, semaphore)
+                for agent, _ in invocation_targets
+            ),
+            return_exceptions=True,
+        )
+
+        for (agent, agent_node), result in zip(invocation_targets, invocation_results):
             try:
-                result = await agent_invoker(agent=agent, user_message=user_message)
+                if isinstance(result, BaseException):
+                    raise result
                 if result.get("error"):
                     raise RuntimeError(str(result["error"]))
                 answer = str(result.get("output") or "").strip() or AGENT_INVALID_RESPONSE_MESSAGE
                 await _publish_agent_workspace_message(db, header, agent, answer)
                 agent_node.status = "active"
-            except Exception:
+            except Exception as exc:
+                logger.warning("Agent invocation failed: agent_id=%s error=%s", agent.agent_id, exc)
                 await _publish_agent_workspace_message(db, header, agent, AGENT_INVALID_RESPONSE_MESSAGE)
                 agent_node.status = "error"
             finally:
@@ -343,7 +379,9 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
             f"{recipient_name}님께 응답가능한 에이전트가 없습니다",
         )
 
-    ignored_agent_ids = [agent_id for agent_id in workspace_agent_ids if agent_id not in set(matched_agent_ids)]
+    ignored_agent_ids = [
+        agent_id for agent_id in all_workspace_agent_ids if agent_id not in set(matched_agent_ids)
+    ]
 
     header.processed_count = len(matched_agent_ids)
     await db.flush()

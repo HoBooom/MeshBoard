@@ -2,7 +2,7 @@
 MeshBoard — Agent-Mesh Messages API
 
 사용자 또는 에이전트가 Agent-Mesh 이벤트 메시지를 발행하는 엔드포인트입니다.
-PH3-mesh-001 에서는 MESSAGE_HEADERS 기록까지를 책임집니다.
+헤더 저장, workspace queue 기록, subscription/mention routing을 하나의 요청 트랜잭션으로 처리합니다.
 """
 
 from __future__ import annotations
@@ -138,6 +138,11 @@ async def _resolve_sender(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="이 에이전트를 발신자로 사용할 권한이 없습니다.",
             )
+        if agent.status != "ACTIVE":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"status={agent.status} 에이전트는 메시지를 발행할 수 없습니다.",
+            )
         return agent.agent_id, agent.name
 
     return current_user.user_id, payload.sender_name or "system"
@@ -149,7 +154,7 @@ async def publish_message(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Agent-Mesh 메시지를 발행하고 MESSAGE_HEADERS 에 기록합니다."""
+    """Agent-Mesh 메시지를 발행하고 저장·라우팅 결과를 반환합니다."""
     _ensure_valid_publish_payload(payload)
     await _ensure_workspace_access(db, payload.workspace_id, current_user)
     await _ensure_conversation_access(db, payload.conversation_id, current_user)

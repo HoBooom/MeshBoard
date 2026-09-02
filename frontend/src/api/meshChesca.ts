@@ -9,7 +9,9 @@ export type MeshChescaScenarioId =
   | 'chesca_mesh'
   | 'reserve_contract_mesh'
   | 'commitment_mesh'
-  | 'round_robin_commitment';
+  | 'round_robin_commitment'
+  // OpenSynCity 정전 MPC mesh: 별도 런타임(CityLearn 2022 phase_all + 정전 주입).
+  | 'outage_mpc_mesh';
 
 export interface MeshChescaScenario {
   id: MeshChescaScenarioId | string;
@@ -33,6 +35,9 @@ export interface MeshChescaFlexMessage {
   // commitment 변형에서 추가되는 필드(optional)
   debt_soc?: number;
   budget_use_soc?: number;
+  // outage_mpc_mesh 변형에서 추가되는 필드(optional)
+  role?: string;
+  outage?: boolean;
 }
 
 export interface MeshChescaNegotiation {
@@ -50,6 +55,27 @@ export interface MeshChescaNegotiation {
   total_debt_soc?: number;
   debt_created_soc?: number;
   debt_repaid_soc?: number;
+  // outage_mpc_mesh 변형에서 추가되는 필드(optional)
+  outage_risk?: number;
+  reserve_floor?: number;
+  emergency_deploy?: number;
+}
+
+// outage_mpc_mesh 전용: 각 에이전트가 매 step 게시하는 자연어 판단 근거(노트북 step_reports).
+export interface MeshChescaAgentReport {
+  agent: string;
+  role: string;
+  reason: string;
+  role_ko?: string;
+  outage?: boolean;
+  action?: number;
+  soc?: number;
+  risk?: number;
+  reserve_floor?: number;
+  forecast_next3?: number[];
+  // 로컬 Qwen narration: llm=true면 LLM 생성 문장, reason_template은 원본 결정론적 문장.
+  llm?: boolean;
+  reason_template?: string;
 }
 
 export interface MeshChescaBoardSnapshot {
@@ -69,6 +95,8 @@ export interface MeshChescaBoardSnapshot {
     available_scenarios: MeshChescaScenario[];
     negotiation: MeshChescaNegotiation | null;
     messages: MeshChescaFlexMessage[];
+    // outage_mpc_mesh 전용: 에이전트 자연어 소통 트레이스(다른 시나리오에선 비어 있음).
+    agent_reports?: MeshChescaAgentReport[];
   };
 }
 
@@ -91,6 +119,20 @@ export const meshChescaApi = {
       params,
       signal: opts?.signal,
     });
+    return res.data;
+  },
+
+  // outage_mpc_mesh: board snapshot을 만들고 에이전트 자연어 소통을 메시지 피드로 발행한 뒤
+  // snapshot을 반환(+ published_messages). 다른 시나리오는 발행 없이 snapshot만 돌려준다.
+  publishBoard: async (
+    params: { workspace_id: string; step: number; scenario: string; window?: number },
+    opts?: { signal?: AbortSignal },
+  ): Promise<MeshChescaBoardSnapshot & { published_messages?: number }> => {
+    const res = await client.post<MeshChescaBoardSnapshot & { published_messages?: number }>(
+      '/mesh-chesca/publish',
+      null,
+      { params, signal: opts?.signal },
+    );
     return res.data;
   },
 };

@@ -12,7 +12,7 @@ import sys
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import hash_password
+from app.core.security import hash_password, verify_password
 from app.db.session import async_session_factory
 from app.models.user import User, UserRole
 
@@ -57,6 +57,12 @@ async def seed_users(session: AsyncSession) -> None:
         )
         user = result.scalar_one_or_none()
         if user:
+            password_changed = not verify_password(
+                user_data["password"], user.password_hash
+            )
+            if password_changed:
+                user.password_hash = hash_password(user_data["password"])
+
             role_result = await session.execute(
                 select(UserRole).where(UserRole.user_id == user.user_id)
             )
@@ -73,11 +79,18 @@ async def seed_users(session: AsyncSession) -> None:
             ]
             for role in missing_roles:
                 session.add(UserRole(user_id=user.user_id, role=role))
-            if stale_roles or missing_roles:
+            if stale_roles or missing_roles or password_changed:
+                changes = []
+                if stale_roles or missing_roles:
+                    changes.append(
+                        f"역할 추가: {', '.join(missing_roles) or '-'} / "
+                        f"제거: {', '.join(entry.role for entry in stale_roles) or '-'}"
+                    )
+                if password_changed:
+                    changes.append("데모 비밀번호 재동기화")
                 print(
-                    f"  🔄 역할 동기화: {user_data['email']} "
-                    f"(추가: {', '.join(missing_roles) or '-'} / "
-                    f"제거: {', '.join(entry.role for entry in stale_roles) or '-'})"
+                    f"  🔄 계정 동기화: {user_data['email']} "
+                    f"({'; '.join(changes)})"
                 )
             else:
                 print(f"  ⏭  이미 존재: {user_data['email']}")

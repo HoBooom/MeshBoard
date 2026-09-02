@@ -3,14 +3,41 @@
 ## Current Verified State
 
 - **Repository root**: `/Users/hobongs/Desktop/HoBong_study/26-1/meshboard`
-- **Standard startup path**: `./init.sh` (또는 수동: docker compose up -d → alembic upgrade head → uvicorn)
-- **Standard verification path**: `curl http://localhost:8000/health`
-- **Current highest-priority unfinished feature**: `PH3-mesh-002` (priority 8 — 구독 규칙 및 라우팅 엔진)
+- **Standard startup path**: `./init.sh` (Node.js 22.13+, Docker Desktop, uv)
+- **Standard verification path**: `SKIP_DB=1 SKIP_INSTALL=1 ./init.sh` 또는 GitHub Actions CI
+- **Current highest-priority unfinished feature**: `PH3-ui-creator-002` (priority 11 — 시나리오 기반 Sandbox)
 - **Current blocker**: 없음
 
 ---
 
 ## Session Log
+
+### Session 010
+- **Date**: 2026-09-02
+- **Goal**: 취업 제출 전 저장소·보안 경계·검증 경로 hardening
+- **Completed**:
+  - `node_modules`, frontend build, Python bytecode, OS/IDE 생성물을 Git 추적 대상에서 제거하고 `.gitignore` 정비
+  - `init.sh` 실행 권한 복구 및 locked install, DB 선택 실행, backend test, frontend lint/build를 하나의 표준 경로로 통합
+  - frontend를 Node 22 기준 Vite 8, React Router 7, Axios 1.20, ESLint 10으로 갱신하고 audit 취약점 0건 확인
+  - route-level lazy loading으로 초기 JS bundle을 약 963 kB에서 약 245 kB로 분리
+  - production 환경에서 기본 JWT secret과 wildcard CORS를 거부하는 fail-fast 설정 추가
+  - Agent runtime에서 등록된 tool allow-list를 실제 실행 경계로 강제하고 CompiledGraph/HTTP client 재사용
+  - message broker fan-out에 동시성 상한과 agent별 timeout 추가
+  - 유지보수가 중단된 `passlib` 경로를 제거하고 bcrypt 직접 검증, 72-byte 입력 경계와 fail-closed 처리를 테스트로 고정
+  - GitHub Actions CI, backend unit tests, `.env.example`, MIT license, 실제 구현 기준 architecture/README 추가
+- **Verification run**:
+  - ✅ `SEED_DB=1 SKIP_INSTALL=1 ./init.sh`: PostgreSQL health, Alembic migration, users/notices/trust seed 전체 성공
+  - ✅ backend `python -m unittest discover -s tests -v`: 37 tests passed
+  - ✅ frontend ESLint 10: 0 errors, 0 warnings
+  - ✅ frontend Vite 8 production build 성공
+  - ✅ `npm audit --audit-level=high`: 0 vulnerabilities
+  - ✅ `uvx pip-audit --local`: known vulnerability 0건
+  - ✅ API smoke: health/login/me/workspaces 모두 200
+  - ✅ `git diff --check`: whitespace error 없음
+- **Known risk or unresolved issue**:
+  - LangGraph checkpoint는 process-local이며, 메시지 broker는 아직 durable queue가 아님
+  - `WorkspacePage.tsx`는 여전히 큰 단일 파일이므로 후속 컴포넌트 분리가 필요
+- **Next best step**: `PH3-ui-creator-002` Sandbox 구현 전 durable checkpointer/worker 경계를 별도 배포 단위로 설계
 
 ### Session 001
 - **Date**: 2026-04-23 ~ 2026-04-24
@@ -61,7 +88,7 @@
   - `frontend/src/layouts/DashboardLayout.tsx`
   - `frontend/src/pages/LoginPage.tsx`, `frontend/src/pages/DashboardPage.tsx`
 - **Known risk or unresolved issue**:
-  - passlib + bcrypt 4.x 경고 메시지 (`error reading bcrypt version`) — 동작에는 영향 없으나 추후 `bcrypt` 직접 사용 또는 `passlib` 업데이트 고려
+  - ~~passlib + bcrypt 4.x 경고 메시지~~ — Session 010에서 passlib 제거 및 bcrypt 직접 사용으로 해결
   - Frontend 빌드 (`npm run dev`) 미검증 — Session 002에서 확인
 - **Next best step**: `PH1-dash-001` — 홈 대시보드 및 타겟팅 공지 시스템 (NOTICES) 구현
 

@@ -362,6 +362,11 @@ async def invoke(
     구성이 제대로 동작하는지 Test 할 수 있습니다.
     """
     agent = await _load_owned_agent(db, agent_id, current_user)
+    if agent.status in {"SUSPENDED", "DEPRECATED"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"status={agent.status} 에이전트는 실행할 수 없습니다.",
+        )
 
     try:
         result = await invoke_agent(
@@ -376,6 +381,11 @@ async def invoke(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
+        ) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="에이전트 실행 서비스를 사용할 수 없습니다. 서버 설정을 확인하세요.",
         ) from exc
 
     return InvokeResponse(

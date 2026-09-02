@@ -10,10 +10,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID
 
+import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -22,17 +22,28 @@ from app.core.config import settings
 from app.db.session import get_db
 
 # ── Password Hashing ─────────────────────────────────────────
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# bcrypt only considers the first 72 bytes. Reject longer inputs instead of
+# silently accepting two different passwords as equivalent.
+_BCRYPT_MAX_BYTES = 72
 
 
 def hash_password(password: str) -> str:
     """비밀번호를 bcrypt 해시로 변환합니다."""
-    return pwd_context.hash(password)
+    encoded = password.encode("utf-8")
+    if len(encoded) > _BCRYPT_MAX_BYTES:
+        raise ValueError("비밀번호는 UTF-8 기준 72바이트 이하여야 합니다.")
+    return bcrypt.hashpw(encoded, bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """입력 비밀번호와 해시된 비밀번호를 비교합니다."""
-    return pwd_context.verify(plain_password, hashed_password)
+    encoded = plain_password.encode("utf-8")
+    if len(encoded) > _BCRYPT_MAX_BYTES:
+        return False
+    try:
+        return bcrypt.checkpw(encoded, hashed_password.encode("utf-8"))
+    except (TypeError, ValueError):
+        return False
 
 
 # ── JWT Token ─────────────────────────────────────────────────

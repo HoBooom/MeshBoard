@@ -35,6 +35,7 @@ import logging
 import operator
 import re
 import uuid
+from functools import lru_cache
 from typing import Annotated, Any, Dict, List, Optional, TypedDict
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -129,16 +130,18 @@ def _build_system_prompt(agent: Agent) -> str:
     )
 
 
+@lru_cache(maxsize=1)
+def _cached_openai_client(api_key: str, base_url: str) -> OpenAI:
+    """Reuse the thread-safe HTTP connection pool across agent invocations."""
+    return OpenAI(api_key=api_key, base_url=base_url, timeout=60)
+
+
 def _build_openai_client() -> OpenAI:
     if not settings.RUNYOUR_API_KEY:
         raise RuntimeError(
             "RUNYOUR_API_KEY 가 설정되지 않았습니다. backend/.env 파일을 확인하세요."
         )
-    return OpenAI(
-        api_key=settings.RUNYOUR_API_KEY,
-        base_url=settings.RUNYOUR_BASE_URL,
-        timeout=60,
-    )
+    return _cached_openai_client(settings.RUNYOUR_API_KEY, settings.RUNYOUR_BASE_URL)
 
 
 def _normalize_model_name(model_name: str) -> str:
@@ -217,8 +220,15 @@ def _extract_json(raw: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _call_tool(tool_id: str, arguments: Dict[str, Any]) -> str:
+def _call_tool(
+    tool_id: str,
+    arguments: Dict[str, Any],
+    *,
+    allowed_tool_ids: frozenset[str],
+) -> str:
     """등록된 langchain Tool 을 호출하고 문자열로 결과를 반환합니다."""
+    if tool_id not in allowed_tool_ids:
+        return f"ERROR: 에이전트에 허용되지 않은 도구 '{tool_id}' 입니다."
     tool = TOOL_REGISTRY.get(tool_id)
     if tool is None:
         return f"ERROR: 등록되지 않은 도구 '{tool_id}' 입니다."
@@ -243,11 +253,14 @@ def _route_after_agent(state: AgentGraphState) -> str:
     return END
 
 
+@lru_cache(maxsize=32)
 def _build_agent_graph(
     client: OpenAI,
     model_name: str,
+    allowed_tool_ids: tuple[str, ...],
 ) -> CompiledStateGraph:
-    """에이전트 하나를 LangGraph CompiledGraph 로 구성합니다."""
+    """Compile and cache a graph for a model and an exact tool allow-list."""
+    allowed_tool_id_set = frozenset(allowed_tool_ids)
 
     def agent_node(state: AgentGraphState) -> Dict[str, Any]:
         if state.get("tool_iterations", 0) >= MAX_TOOL_STEPS:
@@ -328,7 +341,11 @@ def _build_agent_graph(
     def mcp_tool_node(state: AgentGraphState) -> Dict[str, Any]:
         tool_id = str(state.get("next_tool_id") or "").strip()
         arguments = state.get("next_tool_args") or {}
-        observation = _call_tool(tool_id, arguments if isinstance(arguments, dict) else {})
+        observation = _call_tool(
+            tool_id,
+            arguments if isinstance(arguments, dict) else {},
+            allowed_tool_ids=allowed_tool_id_set,
+        )
         tool_message = {
             "role": "user",
             "content": (
@@ -384,7 +401,12 @@ async def invoke_agent(
     client = _build_openai_client()
     system_prompt = _build_system_prompt(agent)
     thread_id = checkpoint_thread_id or str(uuid.uuid4())
-    graph = _build_agent_graph(client=client, model_name=model_name)
+    allowed_tool_ids = tuple(sorted(set(agent.tools or [])))
+    graph = _build_agent_graph(
+        client=client,
+        model_name=model_name,
+        allowed_tool_ids=allowed_tool_ids,
+    )
     config = {"configurable": {"thread_id": thread_id}}
 
     logger.info(
@@ -460,7 +482,9 @@ async def invoke_agent(
             "name": f"meshboard_agent_graph:{agent.agent_id}",
             "nodes": ["__start__", GRAPH_AGENT_NODE, GRAPH_TOOL_NODE, GRAPH_END],
             "entrypoint": GRAPH_AGENT_NODE,
-            "checkpointer": "MemorySaver",
+            "checkpointer": "MemorySaver (process-local)",
+            "durable": False,
+            "allowed_tool_ids": list(allowed_tool_ids),
         },
         "error": state.get("error"),
     }

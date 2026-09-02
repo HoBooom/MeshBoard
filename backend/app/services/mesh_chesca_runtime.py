@@ -74,6 +74,17 @@ SCENARIOS: Dict[str, Dict[str, str]] = {
         "kind": "round_robin",
         "description": "commitment 로직 + planner 소유권을 라운드로빈으로 회전시키는 분산 coordinator 프로토콜.",
     },
+    # 외부 런타임 시나리오: 이 CHESCA 워커(vendored CityLearn 2.1b12)에서 구동하지 않는다.
+    # research/agent_mesh.ipynb 모델(OpenSynCity 정전 MPC mesh)을 CityLearn_old_system(2.6.0b2,
+    # 2022 phase_all + 정전 주입)에서 메인 프로세스 in-process로 구동하며, API 레이어가
+    # app.services.agent_mesh_runtime 로 라우팅한다. 여기엔 dropdown/검증용으로만 등록한다.
+    "outage_mpc_mesh": {
+        "label": "OpenSynCity 정전 MPC Mesh",
+        "kind": "external_outage_mpc",
+        "description": "에이전틱 메시 + 배터리 MPC(LP) + 정전 회복력. 저녁 피크 정전 주입 환경에서 "
+        "OutageRiskAgent가 선택적으로 reserve를 비축하고 정전 순간 긴급 방전으로 미공급 에너지를 최소화한다. "
+        "(CityLearn 2022 phase_all · 별도 런타임)",
+    },
 }
 
 DEFAULT_SCENARIO = "chesca_mesh"
@@ -113,6 +124,12 @@ def available_datasets() -> List[str]:
 def _build_agent(scenario: str, wrapper: Any) -> Any:
     """Instantiate the controller for a scenario. Must run inside _official_working_directory."""
     kind = SCENARIOS[scenario]["kind"]
+    if kind == "external_outage_mpc":
+        # 이 시나리오는 CHESCA 워커가 아니라 메인 프로세스의 agent_mesh_runtime이 처리한다.
+        # API 레이어가 라우팅하므로 워커까지 오면 잘못된 경로다.
+        raise MeshChescaUnavailable(
+            f"Scenario '{scenario}' is served by app.services.agent_mesh_runtime, not the CHESCA worker."
+        )
     if kind == "official":
         from agents.user_agent import SubmissionAgent
 

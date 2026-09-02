@@ -1,152 +1,167 @@
 # MeshBoard
 
-> 수천 개의 헤드리스 AI 에이전트를 기업 환경에서 발견·관리·운영·신뢰할 수 있도록 지원하는 통합 대시보드 플랫폼
+> 조직 안의 AI 에이전트를 등록하고, 워크스페이스에 배치하고, 메시지·목표·정책·실행 상태를 한 화면에서 관리하는 Agent Mesh 운영 프로토타입
 
-## 1. 프로젝트 개요
+[![CI](https://github.com/INHAco2/MeshBoard_V2/actions/workflows/ci.yml/badge.svg)](https://github.com/INHAco2/MeshBoard_V2/actions/workflows/ci.yml)
 
-| 항목 | 내용 |
-|------|------|
-| 서비스명 | **MeshBoard** |
-| 목표 | 수천 개의 헤드리스 AI 에이전트를 기업 환경에서 발견·관리·운영·신뢰할 수 있도록 지원하는 통합 대시보드 플랫폼 |
-| ERD | 18개 테이블, 5개 도메인 |
-| 전체 일정 | 4개 Phase |
-| 핵심 페르소나 | 사용자 · 개발자 · 운영자 · 거버넌스팀 |
+## 프로젝트 범위
 
-## 2. 기술 스택
+MeshBoard는 단일 챗봇이 아니라 여러 에이전트가 함께 일하는 환경을 운영하기 위한 포트폴리오 MVP입니다. 에이전트 등록부터 워크스페이스 배치, 메시지 라우팅, LangGraph 실행, 목표 단위 협업 관찰까지 하나의 흐름으로 연결합니다.
 
-| 영역 | 기술 |
-|------|------|
-| **Frontend** | Vite + React 18 + TypeScript |
-| **스타일링** | Tailwind CSS 3 |
-| **라우팅** | React Router v6 |
-| **API 클라이언트** | Axios (JWT 자동 첨부 인터셉터) |
-| **상태 관리** | Zustand |
-| **Backend** | FastAPI (Python 3.11+) |
-| **ORM** | SQLAlchemy 2.0 (async) |
-| **DB** | PostgreSQL 15 + pgvector (Docker) |
-| **인증** | JWT (python-jose, HS256) + bcrypt |
-| **마이그레이션** | Alembic |
-| **패키지 관리** | uv (backend), npm (frontend) |
+현재 검증된 핵심 범위는 다음과 같습니다.
 
-## 3. 사전 준비
+- JWT/RBAC 기반 사용자·역할 관리
+- 에이전트 메타데이터, 도구 allow-list, 구독 규칙 관리
+- 워크스페이스 생성, 참여 요청, 에이전트 다중 배치
+- `@mention` 및 subscription edge 기반 메시지 라우팅
+- LangGraph 기반 `agent → tool → agent` 실행과 중단·재개
+- Goal/Sub Goal과 전용 conversation 생성
+- React Flow 기반 Agent Mesh 토폴로지
+- CityLearn 전력 환경의 deterministic/LLM planner 및 CHESCA 시나리오 시각화
+- 정책·인증 관리와 운영 콘솔의 기본 API/UI
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) 설치 및 실행
-- [uv](https://docs.astral.sh/uv/) 설치 (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- Node.js 20+ 및 npm 설치
+정책의 런타임 강제 적용, durable checkpoint, 독립 worker queue, SSE/WebSocket, 불변 감사 저장소는 운영 확장 범위이며 아직 구현 완료로 주장하지 않습니다. 세부 상태는 [`feature_list.json`](./feature_list.json)을 기준으로 합니다.
 
-## 4. 실행 방법
+## 아키텍처
 
-### 4-1. 빠른 시작 (권장)
-
-```bash
-# 기본 시작: DB 기동 + 의존성 설치 + 마이그레이션
-bash init.sh
-
-# 시드 데이터 포함 시작
-SEED_DB=1 bash init.sh
-
-# 앱 전체 자동 시작 (Backend + Frontend 포함)
-RUN_APP=1 bash init.sh
-
-# 모두 포함
-SEED_DB=1 RUN_APP=1 bash init.sh
+```text
+React + TypeScript
+        │ REST/JWT
+        ▼
+FastAPI API ─────────────── PostgreSQL + pgvector
+        │                         │
+        ├─ Workspace / Goal       ├─ registry & RBAC
+        ├─ Message Broker         ├─ message / receipt
+        ├─ Trust / Operations     └─ interaction metadata
+        │
+        └─ LangGraph Runtime ── Tool allow-list ── Built-in / external tools
+                    │
+                    └─ CityLearn / CHESCA simulation runtime
 ```
 
-### 4-2. 수동 단계별 실행
+에이전트 실행 시 등록된 도구 allow-list를 런타임에서도 검사합니다. 메시지 fan-out은 동시 실행 수와 개별 timeout을 제한합니다. 현재 LangGraph checkpoint는 프로세스 메모리 기반이므로 서버 재시작을 넘는 복구는 지원하지 않습니다. 자세한 설계와 경계는 [`backend/architecture.md`](./backend/architecture.md)를 참고하세요.
 
-#### ① 인프라 기동 (PostgreSQL)
+## 기술 스택
+
+| 영역 | 구성 |
+|---|---|
+| Frontend | React 18, TypeScript 5.9, Vite 8, React Router 7 |
+| Visualization | React Flow, Recharts, Tailwind CSS 3 |
+| Backend | FastAPI, Python 3.11+, SQLAlchemy 2 async |
+| Agent runtime | LangGraph, OpenAI-compatible API, MCP-shaped tool catalog |
+| Data | PostgreSQL 15, pgvector, Alembic |
+| Quality | unittest, ESLint 10, TypeScript strict mode, GitHub Actions |
+| Package management | uv lockfile, npm lockfile |
+
+## 빠른 시작
+
+### 요구 사항
+
+- Docker Desktop
+- Python 3.11 이상과 [uv](https://docs.astral.sh/uv/)
+- Node.js 22.13 이상
 
 ```bash
-docker compose up -d
+git clone https://github.com/INHAco2/MeshBoard_V2.git
+cd MeshBoard_V2
+cp backend/.env.example backend/.env
 
-# 상태 확인
-docker ps --filter "name=meshboard-postgres"
+# DB, locked dependencies, migration, tests, lint, build
+./init.sh
+
+# 데모 데이터까지 준비
+SEED_DB=1 ./init.sh
+
+# 준비 후 backend와 frontend 실행
+SEED_DB=1 RUN_APP=1 ./init.sh
 ```
 
-#### ② Backend 설정
+Docker 없이 코드 품질 게이트만 재현하려면 이미 의존성이 설치된 상태에서 다음을 실행합니다.
 
 ```bash
+SKIP_DB=1 SKIP_INSTALL=1 ./init.sh
+```
+
+### 수동 실행
+
+```bash
+docker compose up -d --wait
+
 cd backend
-
-# 의존성 설치
-uv sync
-
-# DB 마이그레이션
+uv sync --locked
 uv run alembic upgrade head
-
-# 시드 데이터 생성 (최초 1회)
 uv run python -m app.seed
-
-# 개발 서버 실행 (포트 8000)
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-#### ③ Frontend 설정
+다른 터미널에서:
 
 ```bash
 cd frontend
-
-# 의존성 설치
-npm install
-
-# 개발 서버 실행 (포트 5173)
+npm ci
 npm run dev
 ```
 
-### 4-3. 접속 주소
-.
 | 서비스 | 주소 |
-|--------|------|
-| Frontend | http://localhost:5173 |
-| Backend API | http://localhost:8000 |
-| API 문서 (Swagger) | http://localhost:8000/docs |
-| API 문서 (ReDoc) | http://localhost:8000/redoc |
+|---|---|
+| Frontend | <http://localhost:5173> |
+| API | <http://localhost:8000> |
+| Swagger | <http://localhost:8000/docs> |
+| Health | <http://localhost:8000/health> |
 
-## 5. 데모 계정
+## 데모 계정
 
-> `SEED_DB=1 bash init.sh` 실행 후 사용 가능
+`SEED_DB=1 ./init.sh` 실행 후 사용할 수 있는 로컬 전용 계정입니다.
 
-| 이름 | 이메일 | 비밀번호 | 역할 |
-|------|--------|----------|------|
-| 관리자 | admin@meshboard.io | admin1234 | governance, trust_ops |
-| 개발자 | dev@meshboard.io | dev1234 | agent_owner, agent_engineer, trust_ops, release_manager |
-| 운영자 | ops@meshboard.io | ops1234 | trust_ops, release_manager, agent_owner, agent_engineer |
-| 평가자 | user@meshboard.io | user1234 | evaluator |
+| 역할 | 이메일 | 비밀번호 |
+|---|---|---|
+| Governance | `admin@meshboard.io` | `admin1234` |
+| Agent developer | `dev@meshboard.io` | `dev1234` |
+| Operator | `ops@meshboard.io` | `ops1234` |
+| Evaluator | `user@meshboard.io` | `user1234` |
 
-## 6. 주요 API 엔드포인트
-
-```bash
-# 헬스체크
-curl http://localhost:8000/health
-
-# 로그인 (JWT 발급)
-curl -X POST http://localhost:8000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"admin@meshboard.io","password":"admin1234"}'
-
-# 내 정보 조회
-curl http://localhost:8000/api/v1/auth/me \
-  -H "Authorization: Bearer <access_token>"
-
-# RBAC 테스트 (governance/trust_ops 전용)
-curl http://localhost:8000/api/v1/auth/admin-only \
-  -H "Authorization: Bearer <access_token>"
-```
-
-## 7. 개발 규칙
-
-- 한 번에 하나의 feature만 작업합니다 (`feature_list.json` 참고).
-- feature 완료 조건: 구현 + 검증 실행 + `feature_list.json` / `progress.md` 업데이트 + 커밋.
-- 세션 시작 전 반드시 `progress.md`를 확인합니다.
-- 세션 종료 전 `clean-state-checklist.md`를 체크합니다.
-
-## 8. DB 초기화 (개발 환경)
+## 검증
 
 ```bash
-# 볼륨 포함 전체 초기화
-docker compose down -v
+cd backend
+uv run python -m unittest discover -s tests -v
 
-# 재기동 + 마이그레이션 + 시드
-docker compose up -d
-cd backend && uv run alembic upgrade head && uv run python -m app.seed
+cd ../frontend
+npm run lint
+npm run build
+npm audit --audit-level=high
 ```
+
+GitHub Actions에서도 DB가 필요 없는 backend 37개 테스트와 frontend lint/build를 같은 방식으로 실행합니다.
+
+## 저장소 구조
+
+```text
+backend/
+  app/api/v1/          FastAPI route boundary
+  app/core/            configuration, JWT, RBAC
+  app/models/          SQLAlchemy registry models
+  app/services/        agent runtime, broker, CityLearn services
+  tests/               isolated API/service tests
+frontend/
+  src/api/             typed API clients
+  src/pages/           dashboard workbenches
+docs/                  experiments and operating notes
+research/              reproducible research notebooks
+CityLearn_old_system/  pinned simulation source used by the demo
+Final_mesh1-main/      CHESCA experiment runtime used by the demo
+```
+
+`CityLearn_old_system`과 `Final_mesh1-main`은 재현을 위해 포함한 연구 런타임입니다. 애플리케이션 코드와 생성물은 분리하며 `node_modules`, `dist`, `pyc`, 로컬 환경 파일은 추적하지 않습니다.
+
+## 보안 및 운영 주의사항
+
+- `.env.example`만 커밋하고 실제 API key와 JWT secret은 커밋하지 않습니다.
+- `ENVIRONMENT=production`에서는 기본 JWT secret과 wildcard CORS를 거부합니다.
+- 외부 도구를 등록해도 각 에이전트에 명시적으로 허용된 도구만 실행할 수 있습니다.
+- 현재 OIDC 구현은 provider boundary와 mock 검증용입니다. 실제 기업 IdP 연동 완료로 간주하지 않습니다.
+- 현재 message broker는 bounded parallel execution이지만 독립 작업 큐는 아닙니다.
+
+## 라이선스
+
+MIT. 자세한 내용은 [`LICENSE`](./LICENSE)를 참고하세요.
