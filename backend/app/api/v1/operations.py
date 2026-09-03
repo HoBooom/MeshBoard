@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.rbac import RequireRoles
 from app.core.security import get_current_user
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.agent import Agent
 from app.models.interaction import Interaction
@@ -31,10 +32,23 @@ from app.schemas.operations import (
     AgentOpsRead,
     AgentStatusBreakdown,
     AgentStatusUpdate,
+    ExecutionNodeRead,
+    ExecutionSummaryRead,
+    ExecutionTreeRead,
+    ArchiveResultRead,
+    ModelAnalyticsRead,
+    OperationsAnalyticsRead,
+    ParallelGroupAnalyticsRead,
+    ConnectorStatusRead,
+    ConnectorTestRead,
     HealthComponent,
     OperationsOverview,
     SystemHealth,
 )
+from app.services.runtime_control import runtime_control
+from app.services.interaction_archive import archive_completed_interactions
+from app.services.security_events import emit_security_event
+from app.services.schema_compat import interaction_to_current_payload
 
 router = APIRouter(prefix="/operations", tags=["operations"])
 
@@ -132,6 +146,7 @@ async def list_agents_ops(
 
     out: List[AgentOpsRead] = []
     for a in agents:
+        runtime = runtime_control.snapshot(a.agent_id)
         out.append(
             AgentOpsRead(
                 agent_id=a.agent_id,
@@ -143,6 +158,8 @@ async def list_agents_ops(
                 tool_count=len(a.tools or []),
                 updated_at=a.updated_at,
                 last_activity=last_activity.get(a.agent_id),
+                active_executions=runtime.active_executions,
+                control_generation=runtime.generation,
             )
         )
     return out
@@ -169,6 +186,10 @@ async def update_agent_status(
 
     agent.status = payload.status
     agent.updated_at = datetime.now(timezone.utc)
+    if payload.status == "ACTIVE":
+        runtime = runtime_control.activate(agent.agent_id)
+    else:
+        runtime = runtime_control.suspend(agent.agent_id)
     await db.commit()
     await db.refresh(agent)
 
@@ -184,6 +205,8 @@ async def update_agent_status(
         tool_count=len(agent.tools or []),
         updated_at=agent.updated_at,
         last_activity=None,
+        active_executions=runtime.active_executions,
+        control_generation=runtime.generation,
     )
 
 
@@ -219,6 +242,210 @@ async def recent_activity(
     ]
 
 
+@router.post("/archive", response_model=ArchiveResultRead)
+async def archive_interactions(
+    retention_days: int = 90,
+    dry_run: bool = False,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(RequireOpsWrite),
+):
+    """보존 기간이 지난 완료 실행을 불변 아카이브로 원자적으로 이관합니다."""
+    try:
+        return await archive_completed_interactions(
+            db, retention_days=retention_days, dry_run=dry_run
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@router.get("/analytics", response_model=OperationsAnalyticsRead)
+async def operations_analytics(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """모델별 토큰/실행량과 병렬 그룹의 실제 절약 시간을 집계합니다."""
+    model_rows = (
+        await db.execute(
+            select(
+                Interaction.model_used,
+                func.count(Interaction.interaction_id),
+                func.count(Interaction.interaction_id).filter(Interaction.state == "FAILED"),
+                func.coalesce(func.sum(Interaction.token_input), 0),
+                func.coalesce(func.sum(Interaction.token_output), 0),
+                func.coalesce(func.avg(Interaction.duration_ms), 0),
+            )
+            .where(Interaction.model_used.is_not(None))
+            .group_by(Interaction.model_used)
+            .order_by(func.count(Interaction.interaction_id).desc())
+        )
+    ).all()
+    models = []
+    pricing = settings.model_pricing
+    for model, count, failed, token_input, token_output, average_duration in model_rows:
+        rates = pricing.get(model)
+        estimated_cost = None
+        if rates:
+            estimated_cost = round(
+                (int(token_input) * rates["input"] + int(token_output) * rates["output"])
+                / 1_000_000,
+                6,
+            )
+        models.append(
+            ModelAnalyticsRead(
+                model=model,
+                execution_count=count,
+                failed_count=failed,
+                token_input=int(token_input),
+                token_output=int(token_output),
+                total_tokens=int(token_input) + int(token_output),
+                average_duration_ms=round(float(average_duration), 1),
+                estimated_cost_usd=estimated_cost,
+            )
+        )
+
+    parallel_rows = (
+        await db.execute(
+            select(
+                Interaction.parallel_group_id,
+                func.count(Interaction.interaction_id),
+                func.min(Interaction.start_timestamp),
+                func.max(Interaction.complete_timestamp),
+                func.coalesce(func.sum(Interaction.duration_ms), 0),
+            )
+            .where(Interaction.parallel_group_id.is_not(None))
+            .group_by(Interaction.parallel_group_id)
+            .order_by(func.min(Interaction.start_timestamp).desc())
+            .limit(20)
+        )
+    ).all()
+    parallel_groups = []
+    for group_id, count, started_at, completed_at, serial_duration in parallel_rows:
+        wall_duration = (
+            max(0, round((completed_at - started_at).total_seconds() * 1000))
+            if completed_at and started_at
+            else 0
+        )
+        serial_ms = int(serial_duration)
+        parallel_groups.append(
+            ParallelGroupAnalyticsRead(
+                parallel_group_id=group_id,
+                execution_count=count,
+                wall_duration_ms=wall_duration,
+                serial_duration_ms=serial_ms,
+                saved_duration_ms=max(0, serial_ms - wall_duration),
+            )
+        )
+    return OperationsAnalyticsRead(models=models, parallel_groups=parallel_groups)
+
+
+@router.get("/connectors/security-webhook", response_model=ConnectorStatusRead)
+async def security_webhook_status(
+    current_user: User = Depends(get_current_user),
+):
+    url = settings.SECURITY_WEBHOOK_URL.strip()
+    return ConnectorStatusRead(
+        configured=bool(url),
+        endpoint=url.split("?", 1)[0] if url else None,
+    )
+
+
+@router.post("/connectors/security-webhook/test", response_model=ConnectorTestRead)
+async def test_security_webhook(
+    current_user: User = Depends(RequireOpsWrite),
+):
+    result = await emit_security_event(
+        "connector.test",
+        severity="info",
+        attributes={"requested_by": str(current_user.user_id)},
+    )
+    return ConnectorTestRead(**result)
+
+
+# ── System Health ─────────────────────────────────────────────────
+@router.get("/executions", response_model=List[ExecutionSummaryRead])
+async def list_executions(
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """최근 Agent Mesh 실행 트리의 루트와 노드 수를 반환합니다."""
+    limit = max(1, min(limit, 100))
+    node_counts = (
+        select(
+            Interaction.execution_tree_id.label("tree_id"),
+            func.count(Interaction.interaction_id).label("node_count"),
+        )
+        .where(Interaction.execution_tree_id.is_not(None))
+        .group_by(Interaction.execution_tree_id)
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            select(Interaction, node_counts.c.node_count)
+            .join(node_counts, node_counts.c.tree_id == Interaction.execution_tree_id)
+            .where(Interaction.tree_depth == 0)
+            .order_by(Interaction.start_timestamp.desc())
+            .limit(limit)
+        )
+    ).all()
+    return [
+        ExecutionSummaryRead(
+            execution_tree_id=root.execution_tree_id,
+            root_interaction_id=root.interaction_id,
+            conversation_id=root.conversation_id,
+            actor_name=root.actor_name,
+            prompt=root.prompt,
+            state=root.state,
+            node_count=node_count,
+            duration_ms=root.duration_ms,
+            started_at=root.start_timestamp,
+        )
+        for root, node_count in rows
+    ]
+
+
+@router.get("/executions/{execution_tree_id}", response_model=ExecutionTreeRead)
+async def get_execution_tree(
+    execution_tree_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """ltree 경로 순서로 실행의 위임·추론·도구 노드를 반환합니다."""
+    rows = (
+        await db.execute(
+            select(Interaction)
+            .where(Interaction.execution_tree_id == execution_tree_id)
+            .order_by(Interaction.tree_path, Interaction.start_timestamp)
+        )
+    ).scalars().all()
+    if not rows:
+        raise HTTPException(404, "실행 트리를 찾을 수 없습니다.")
+    return ExecutionTreeRead(
+        execution_tree_id=execution_tree_id,
+        nodes=[
+            ExecutionNodeRead(
+                interaction_id=row.interaction_id,
+                parent_id=row.parent_id,
+                execution_tree_id=row.execution_tree_id,
+                tree_depth=row.tree_depth,
+                tree_path=str(row.tree_path),
+                actor_name=row.actor_name,
+                target_name=row.target_name,
+                kind=row.kind,
+                state=row.state,
+                duration_ms=row.duration_ms,
+                reasoning_trace=row.reasoning_trace,
+                results=row.results,
+                tool_name=row.tool_name,
+                error_message=row.error_message,
+                start_timestamp=row.start_timestamp,
+                payload=interaction_to_current_payload(row),
+            )
+            for row in rows
+        ],
+    )
+
+
 # ── System Health ─────────────────────────────────────────────────
 @router.get("/health", response_model=SystemHealth)
 async def system_health(
@@ -233,9 +460,14 @@ async def system_health(
         db_status, db_detail = "offline", "연결 실패"
 
     components = [
-        HealthComponent(name="API 서버", status="online", detail="FastAPI v0.1.0"),
+        HealthComponent(name="API 서버", status="online", detail="FastAPI v1.0.0"),
         HealthComponent(name="PostgreSQL", status=db_status, detail=db_detail),
         HealthComponent(name="Agent Runtime", status="online", detail="LangGraph 실행기 가동 중"),
         HealthComponent(name="메시지 브로커", status="online", detail="구독 라우팅 활성"),
+        HealthComponent(
+            name="보안 이벤트 커넥터",
+            status="online" if settings.SECURITY_WEBHOOK_URL else "degraded",
+            detail="웹훅 구성됨" if settings.SECURITY_WEBHOOK_URL else "선택 설정 없음",
+        ),
     ]
     return SystemHealth(components=components)

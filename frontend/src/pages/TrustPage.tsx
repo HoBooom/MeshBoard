@@ -231,15 +231,26 @@ function PolicyPanel({ policies, onChanged }: { policies: Policy[]; onChanged: (
   const [name, setName] = useState('');
   const [purpose, setPurpose] = useState('');
   const [description, setDescription] = useState('');
+  const [templateText, setTemplateText] = useState('{\n  "pii_masking": true,\n  "max_input_chars": 4000\n}');
+  const [validationMessage, setValidationMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const create = async () => {
     if (!name.trim()) return;
     setBusy(true);
     try {
-      await trustApi.createPolicy({ name, purpose, description, status: 'DRAFT' });
+      const template = JSON.parse(templateText) as Record<string, unknown>;
+      const validation = await trustApi.validatePolicy(template);
+      if (!validation.valid) {
+        setValidationMessage(validation.errors.join(' '));
+        return;
+      }
+      await trustApi.createPolicy({ name, purpose, description, template, status: 'DRAFT' });
       setName(''); setPurpose(''); setDescription('');
+      setValidationMessage('템플릿 검증을 통과해 초안으로 저장했습니다.');
       onChanged();
+    } catch (error) {
+      setValidationMessage(error instanceof SyntaxError ? '템플릿 JSON 형식을 확인하세요.' : '정책을 저장하지 못했습니다.');
     } finally {
       setBusy(false);
     }
@@ -259,6 +270,8 @@ function PolicyPanel({ policies, onChanged }: { policies: Policy[]; onChanged: (
           <input className="input-field text-[15px]" placeholder="정책 이름" value={name} onChange={(e) => setName(e.target.value)} />
           <input className="input-field text-[15px]" placeholder="목적 (예: 개인정보 처리 통제)" value={purpose} onChange={(e) => setPurpose(e.target.value)} />
           <textarea className="input-field text-[15px] min-h-[88px]" placeholder="설명" value={description} onChange={(e) => setDescription(e.target.value)} />
+          <textarea className="input-field min-h-[150px] font-mono text-[12px]" aria-label="정책 템플릿 JSON" value={templateText} onChange={(e) => setTemplateText(e.target.value)} />
+          {validationMessage && <p className="text-[12px] leading-5 text-white/55">{validationMessage}</p>}
           <button onClick={create} disabled={busy || !name.trim()} className="btn-primary w-full text-[15px]">
             {busy ? '발급 중...' : '정책 발급 (초안)'}
           </button>

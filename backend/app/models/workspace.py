@@ -27,7 +27,7 @@ class Workspace(Base):
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMPTZ, nullable=False, default=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
-        CheckConstraint("state IN ('ACTIVE','ARCHIVED','DELETED')", name="ck_ws_state"),
+        CheckConstraint("state IN ('ACTIVE','SANDBOX','ARCHIVED','DELETED')", name="ck_ws_state"),
     )
 
 class Goal(Base):

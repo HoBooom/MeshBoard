@@ -2,12 +2,18 @@
 MeshBoard — Agent Runtime
 
 등록된 에이전트 레코드를 기반으로 각 에이전트를 하나의 LangGraph CompiledGraph 로
-컴파일하고, RunYour AI (OpenAI-호환 엔드포인트) 와 내장 도구(MCP)를 그래프 노드로
-실행합니다.
+컴파일하고, OpenAI-호환 LLM 엔드포인트와 내장 도구(MCP)를 그래프 노드로 실행합니다.
 
-RunYour AI 프록시는 GPT-5 계열 모델의 OpenAI function-calling 응답을 일관되게
-전달하지 못하므로 (구조적 tool_calls 를 `null` 로 돌려주는 사례가 있음),
-도구 호출 프로토콜을 LLM 이 내는 JSON 텍스트를 파싱하는 방식으로 단순화했습니다.
+LLM 백엔드
+──────────
+기본값은 **로컬 Ollama**(`http://localhost:11434/v1`, `qwen2.5:7b`)입니다. 클론한 사람이
+API 키 없이 바로 실행할 수 있고, 유료 호출이 발생하지 않습니다. `LLM_BASE_URL` /
+`LLM_MODEL` 만 바꾸면 vLLM·LM Studio·OpenAI·게이트웨이 등 어떤 OpenAI-호환 백엔드로도
+교체됩니다 (`backend/.env.example` 참고).
+
+도구 호출은 OpenAI function-calling 대신 **LLM 이 내는 JSON 텍스트를 파싱**하는 방식으로
+단순화했습니다. 소형 로컬 모델과 일부 게이트웨이가 구조적 `tool_calls` 를 일관되게
+돌려주지 못하기 때문이며(`null` 반환 사례), 이 방식은 백엔드 종류와 무관하게 동작합니다.
 
 프로토콜
 ────────
@@ -46,6 +52,7 @@ from openai import OpenAI
 from app.core.config import settings
 from app.models.agent import Agent
 from app.services.tool_catalog import TOOL_REGISTRY, list_mcp_tool_definitions
+from app.services.runtime_control import AgentExecutionCancelled, runtime_control
 
 
 logger = logging.getLogger(__name__)
@@ -90,7 +97,7 @@ def _build_tool_manifest(tool_ids: List[str]) -> str:
     return "\n".join(entries)
 
 
-def _build_system_prompt(agent: Agent) -> str:
+def _build_system_prompt(agent: Agent, tool_ids: Optional[list[str]] = None) -> str:
     """에이전트 레코드로부터 system prompt 를 구성합니다."""
     custom_prompt = (agent.agent_card or {}).get("system_prompt")
     if custom_prompt:
@@ -109,7 +116,7 @@ def _build_system_prompt(agent: Agent) -> str:
             parts.append(f"수행 가능한 도메인 역할: {', '.join(agent.roles)}")
         persona = "\n".join(parts)
 
-    tool_manifest = _build_tool_manifest(list(agent.tools or []))
+    tool_manifest = _build_tool_manifest(tool_ids if tool_ids is not None else list(agent.tools or []))
 
     protocol = (
         "### 응답 프로토콜\n"
@@ -130,37 +137,38 @@ def _build_system_prompt(agent: Agent) -> str:
     )
 
 
-@lru_cache(maxsize=1)
-def _cached_openai_client(api_key: str, base_url: str) -> OpenAI:
+@lru_cache(maxsize=4)
+def _cached_openai_client(api_key: str, base_url: str, timeout: float) -> OpenAI:
     """Reuse the thread-safe HTTP connection pool across agent invocations."""
-    return OpenAI(api_key=api_key, base_url=base_url, timeout=60)
+    return OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
 
 
 def _build_openai_client() -> OpenAI:
-    if not settings.RUNYOUR_API_KEY:
+    """OpenAI-호환 클라이언트를 만듭니다.
+
+    기본값은 로컬 서버(Ollama)이므로 API 키 없이도 동작합니다. 외부 게이트웨이를 쓰도록
+    설정한 경우에만 키를 요구합니다.
+    """
+    api_key = settings.llm_api_key
+    if settings.llm_uses_external_gateway and not api_key:
         raise RuntimeError(
-            "RUNYOUR_API_KEY 가 설정되지 않았습니다. backend/.env 파일을 확인하세요."
+            "외부 LLM 게이트웨이가 선택됐지만 RUNYOUR_API_KEY 가 비어 있습니다. "
+            "backend/.env 를 확인하거나, 값을 비워 로컬 모델을 사용하세요."
         )
-    return _cached_openai_client(settings.RUNYOUR_API_KEY, settings.RUNYOUR_BASE_URL)
+    return _cached_openai_client(
+        api_key, settings.llm_base_url, float(settings.LLM_TIMEOUT_SECONDS)
+    )
 
 
 def _normalize_model_name(model_name: str) -> str:
-    """RunYour AI 가 요구하는 provider/model 형식으로 모델명을 보정합니다.
+    """설정된 별칭만 치환하고 나머지는 모델명을 그대로 전달합니다.
 
-    RunYour 등록명에는 version date suffix가 붙는 경우가 많아 짧은 alias를 풀이한다.
+    Ollama 는 `qwen2.5:7b` 처럼 provider 접두가 없고, OpenRouter 계열 게이트웨이는
+    `openai/gpt-5` 처럼 접두를 요구합니다. 어느 쪽이든 사용자가 적은 문자열을 그대로
+    보내는 것이 안전하므로, 접두를 임의로 붙이지 않습니다.
     """
     normalized = model_name.strip()
-    alias = {
-        "gpt-5-mini": "openai/gpt-5-mini-2025-08-07",
-        "openai/gpt-5-mini": "openai/gpt-5-mini-2025-08-07",
-        "gpt-5-nano": "openai/gpt-5-nano-2025-08-07",
-        "openai/gpt-5-nano": "openai/gpt-5-nano-2025-08-07",
-    }
-    if normalized in alias:
-        return alias[normalized]
-    if "/" in normalized:
-        return normalized
-    return f"openai/{normalized}"
+    return settings.llm_model_aliases.get(normalized, normalized)
 
 
 def _extract_json(raw: str) -> Optional[Dict[str, Any]]:
@@ -241,6 +249,30 @@ def _call_tool(
     return str(result)
 
 
+def _create_completion(client: OpenAI, model_name: str, messages: List[Dict[str, Any]]):
+    """출력 길이 상한 파라미터 이름이 서버마다 달라 두 형태를 모두 시도합니다.
+
+    OpenAI 최신 모델(GPT-5 계열)은 `max_completion_tokens` 만 받고, Ollama/vLLM 등
+    다수의 OpenAI-호환 로컬 서버는 `max_tokens` 만 받습니다. 어느 쪽이든 동작하도록
+    최신 이름을 먼저 시도하고, 서버가 거부하면 legacy 이름으로 한 번 재시도합니다.
+    """
+    limit = int(settings.LLM_MAX_OUTPUT_TOKENS)
+    try:
+        return client.chat.completions.create(
+            model=model_name, messages=messages, max_completion_tokens=limit
+        )
+    except TypeError:
+        # 설치된 SDK가 해당 인자를 모르는 경우.
+        pass
+    except Exception as exc:  # noqa: BLE001 — 서버가 파라미터를 거부한 경우만 폴백한다.
+        if "max_completion_tokens" not in str(exc):
+            raise
+        logger.debug("Server rejected max_completion_tokens; retrying with max_tokens")
+    return client.chat.completions.create(
+        model=model_name, messages=messages, max_tokens=limit
+    )
+
+
 def _transition(source: str, target: str, reason: str) -> Dict[str, Any]:
     return {"from": source, "to": target, "reason": reason}
 
@@ -277,13 +309,7 @@ def _build_agent_graph(
             }
 
         try:
-            completion = client.chat.completions.create(
-                model=model_name,
-                messages=state["messages"],
-                # 1200은 17 building × validate JSON stringify를 담기에 부족하여 truncate 발생.
-                # 4096으로 상향 (Grid-Agent 17 building 시 validate 호출이 ~2000자 차지).
-                max_completion_tokens=4096,
-            )
+            completion = _create_completion(client, model_name, state["messages"])
         except Exception as exc:
             logger.exception("LLM call failed")
             return {
@@ -395,13 +421,20 @@ async def invoke_agent(
     checkpoint_thread_id: Optional[str] = None,
     resume: bool = False,
     interrupt_after_node: Optional[str] = None,
+    allowed_tool_ids_override: Optional[set[str] | frozenset[str]] = None,
 ) -> Dict[str, Any]:
     """지정한 에이전트를 실행하고, 출력·도구 호출 이력·전체 메시지 스텝을 반환합니다."""
-    model_name = _normalize_model_name(model or settings.DEFAULT_LLM_MODEL)
+    model_name = _normalize_model_name(model or settings.llm_default_model)
     client = _build_openai_client()
-    system_prompt = _build_system_prompt(agent)
+    allowed_tool_ids = tuple(
+        sorted(
+            set(agent.tools or [])
+            if allowed_tool_ids_override is None
+            else set(agent.tools or []).intersection(allowed_tool_ids_override)
+        )
+    )
+    system_prompt = _build_system_prompt(agent, list(allowed_tool_ids))
     thread_id = checkpoint_thread_id or str(uuid.uuid4())
-    allowed_tool_ids = tuple(sorted(set(agent.tools or [])))
     graph = _build_agent_graph(
         client=client,
         model_name=model_name,
@@ -457,12 +490,31 @@ async def invoke_agent(
     # asyncio.wait_for timeout 도, client 연결 끊김/서버 종료 시 cancellation 도 먹지 않는다.
     # to_thread 로 thread pool 에 넘겨 (1) gather 가 실제 병렬 실행되고 (2) timeout/cancel 이
     # 호출 대기를 중단시킬 수 있게 한다(이미 시작된 HTTP 호출 자체는 thread 에서 끝까지 진행).
-    state = await asyncio.to_thread(
-        graph.invoke,
-        initial_state,
-        config=config,
-        interrupt_after=interrupt_after,
+    cancellation_event = runtime_control.begin(agent.agent_id)
+    if cancellation_event.is_set():
+        runtime_control.end(agent.agent_id)
+        raise AgentExecutionCancelled("에이전트가 운영자에 의해 중지되었습니다.")
+    graph_task = asyncio.create_task(
+        asyncio.to_thread(
+            graph.invoke,
+            initial_state,
+            config=config,
+            interrupt_after=interrupt_after,
+        )
     )
+    cancellation_task = asyncio.create_task(cancellation_event.wait())
+    try:
+        completed, _ = await asyncio.wait(
+            {graph_task, cancellation_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        if cancellation_task in completed and cancellation_event.is_set():
+            graph_task.cancel()
+            raise AgentExecutionCancelled("에이전트가 운영자에 의해 중지되었습니다.")
+        cancellation_task.cancel()
+        state = await graph_task
+    finally:
+        cancellation_task.cancel()
+        runtime_control.end(agent.agent_id)
     snapshot = graph.get_state(config)
     checkpoint_config = snapshot.config.get("configurable", {})
 

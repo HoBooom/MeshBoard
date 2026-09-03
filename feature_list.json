@@ -423,14 +423,18 @@
       "area": "creator_wb",
       "title": "시나리오 기반 시뮬레이션 환경 (Sandbox)",
       "user_visible_behavior": "가상의 이벤트를 발생시켜 에이전트들이 실 운영 환경에 영향 없이 올바르게 연쇄 반응하는지 테스트한다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
         "1. 상태가 sandbox인 워크스페이스 생성 후 테스트 이벤트 주입",
         "2. 에이전트 간 라우팅 및 의사결정 로그 확인",
         "3. 운영 DB에 부하를 주거나 오염시키지 않는지 격리 상태 검증"
       ],
-      "evidence": [],
-      "notes": "거버넌스 승인 전 필수 검증 단계."
+      "evidence": [
+        "✅ [2026-09-03] SANDBOX 상태 워크스페이스와 sandbox_runs 전용 저장소, 생성/목록/시나리오 실행 API 및 Dashboard UI 구현.",
+        "✅ direct mention, subscription priority/filter, collaborator handoff를 실제 도구 호출 없이 결정론적으로 시뮬레이션하고 decision_log에 저장.",
+        "✅ API E2E에서 1개 에이전트 라우팅 완료, production_write_count=0 및 운영 INTERACTIONS 수 0→0 불변 확인."
+      ],
+      "notes": "운영 메시지·Interaction을 기록하지 않는 격리형 거버넌스 사전 검증 단계로 완료."
     },
     {
       "id": "PH3-ui-trust-001",
@@ -438,13 +442,18 @@
       "area": "trust_wb",
       "title": "정책 템플릿 검증 및 인증 라이프사이클 관리",
       "user_visible_behavior": "거버넌스팀이 에이전트의 행동을 제어하는 정책을 생성하고, 안전 테스트를 통과한 에이전트에 인증 마크를 부여한다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
         "1. POLICIES 생성 및 AGENT_POLICIES 연결 API 확인",
         "2. 인증 발급(CERTIFICATIONS) 시 에이전트 카드에 신뢰 마크 렌더링 확인"
       ],
-      "evidence": [],
-      "notes": "정책/인증 CRUD와 Trust UI baseline은 존재한다. 그러나 정책 템플릿 검증 및 런타임 enforcement, 마켓플레이스 카드의 인증 표시 acceptance criteria가 완료되지 않아 not_started를 유지한다."
+      "evidence": [
+        "✅ [2026-09-03] 지원 정책 필드/타입 검증 API와 Trust JSON 편집기 구현, 유효 템플릿 valid=true 및 미지원/범위 오류 valid=false E2E 확인.",
+        "✅ ACTIVE 정책만 연결하고 direct/broker 실행 전에 차단어·입력 길이·필수 인증·도구 allow/deny·PII 마스킹 강제.",
+        "✅ 임시 ACTIVE 차단 정책 E2E에서 LLM 호출 전 403과 위반 사유 확인 후 연결 해제·REVOKED 정리.",
+        "✅ Marketplace API/UI가 만료되지 않은 PASSED 인증 배지와 trust_level을 노출."
+      ],
+      "notes": "정책/인증 CRUD baseline을 런타임 강제와 사용자 노출까지 연결해 완료."
     },
     {
       "id": "PH3-ui-operator-001",
@@ -452,13 +461,17 @@
       "area": "operator_wb",
       "title": "에이전트 런타임 제어 및 모니터링",
       "user_visible_behavior": "운영자가 현재 시스템의 에이전트 처리량, 오류율을 실시간 확인하고 폭주하는 에이전트를 강제 정지(Kill/Pause)할 수 있다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
         "1. 에이전트 상태(status) 강제 변경 API 호출",
         "2. 상태 변경 이벤트가 이벤트 버스를 통해 전파되어 동작을 즉각 중지하는지 확인"
       ],
-      "evidence": [],
-      "notes": "운영 현황과 상태 변경 API/UI baseline은 존재한다. 그러나 실행 중 작업을 이벤트 버스로 즉시 중단하는 kill-switch enforcement가 없어 not_started를 유지한다."
+      "evidence": [
+        "✅ [2026-09-03] process-local cooperative runtime registry가 실행 수, suspended signal, control generation을 추적.",
+        "✅ 운영 상태 PATCH가 SUSPENDED 시 현재 실행 대기를 취소하고 ACTIVE 시 새 실행 신호로 복원.",
+        "✅ API E2E에서 ACTIVE→SUSPENDED→ACTIVE, control_generation 0→1→2 및 최종 원상 복원 확인."
+      ],
+      "notes": "동기 provider 요청 자체는 worker thread에서 끝날 수 있으나 결과는 폐기된다. 프로세스 간 kill은 durable worker 확장 범위."
     },
     {
       "id": "PH3-ui-operator-002",
@@ -466,13 +479,17 @@
       "area": "operator_wb",
       "title": "A2A 실행 트리 (Execution Tree) 뷰어",
       "user_visible_behavior": "특정 작업의 결과를 클릭하면 상위 에이전트부터 하위 에이전트까지의 위임 체인과 각 단계별 추론(Reasoning) 과정을 트리 맵으로 추적할 수 있다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
         "1. tree_depth와 tree_path(ltree)를 기반으로 INTERACTIONS 테이블 계층 쿼리 실행",
         "2. 프론트엔드 트리 UI 컴포넌트 렌더링 검증"
       ],
-      "evidence": [],
-      "notes": "이 시스템의 핵심 가치(투명성). ltree 쿼리 성능 최적화 요망."
+      "evidence": [
+        "✅ [2026-09-03] broker가 root message, handoff, reasoning/tool step을 schema 2.0 Interaction과 ltree path로 기록.",
+        "✅ 최근 실행 목록/단일 실행 트리 API와 Operations 계층 UI 구현.",
+        "✅ 실제 direct mention 메시지 E2E에서 receipt 1건과 동일 execution_tree_id의 depth 0~1 노드 2건 조회 확인."
+      ],
+      "notes": "실패한 외부 LLM 호출도 FAILED handoff와 오류 사유로 추적되어 운영 투명성을 유지한다."
     },
     {
       "id": "PH4-gov-001",
@@ -480,14 +497,18 @@
       "area": "advanced",
       "title": "규제 준수용 불변 감사 아카이브 (Immutable Archive)",
       "user_visible_behavior": "설정된 정책(보존 기간 90일 등)에 따라 지난 대화 기록이 변조 불가능한 아카이브 테이블로 안전하게 이관된다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
         "1. 아카이브 이관 트리거(또는 크론잡) 수동 실행",
         "2. INTERACTIONS에서 완료된 레코드가 삭제(Soft Delete)되고 INTERACTION_ARCHIVE로 복사되었는지 확인",
         "3. is_immutable 플래그 및 아카이브 타임스탬프 검증"
       ],
-      "evidence": [],
-      "notes": "DB 레벨에서 트리거를 통한 변조 방지 설정 고려."
+      "evidence": [
+        "✅ [2026-09-03] retention 기간 이전 COMPLETED/FAILED/CANCELLED Interaction을 원자적으로 archive copy 후 원본 삭제하는 서비스/API 구현.",
+        "✅ dry-run API가 cutoff와 eligible_count를 반환하며 실제 DB E2E 성공.",
+        "✅ Alembic 014가 interaction_archive UPDATE/DELETE 거부 trigger를 설치하고 DB에서 enabled 상태 확인."
+      ],
+      "notes": "실행 스케줄러는 배포 환경별 Cron/Job에서 POST /operations/archive를 호출하도록 분리."
     },
     {
       "id": "PH4-analytics-001",
@@ -495,14 +516,18 @@
       "area": "advanced",
       "title": "모델 토큰 비용 및 병렬 실행 성능 분석 대시보드",
       "user_visible_behavior": "어떤 모델(Gemini, Claude 등)이 비용을 가장 많이 쓰는지 집계하고, 병렬 실행 그룹(parallel_group_id)별 성능 지표를 분석한다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
         "1. model_used별 토큰 input/output 집계 API 작성",
         "2. parallel_group_id 단위 묶음 처리 시간 계산 로직 검증",
         "3. 운영자 대시보드 차트(Recharts) 렌더링 확인"
       ],
-      "evidence": [],
-      "notes": "대용량 데이터 집계 시 Materialized View 고려."
+      "evidence": [
+        "✅ [2026-09-03] model_used별 실행/실패/token input/output/평균 시간 및 선택적 USD 비용 집계 API 구현.",
+        "✅ parallel_group_id별 wall/serial/saved duration 계산 구현.",
+        "✅ Operations UI에 Recharts 모델 토큰·병렬 절약 시간 차트 구현, TypeScript/Vite build 통과."
+      ],
+      "notes": "현재 MVP는 request-time aggregate이며 대용량 운영 단계에서 Materialized View로 교체 가능."
     },
     {
       "id": "PH4-integ-001",
@@ -510,14 +535,18 @@
       "area": "advanced",
       "title": "이벤트 버스 및 외부 커넥터 통합 (SIEM)",
       "user_visible_behavior": "에이전트 보안 위반이나 치명적 알럿 발생 시 기업 내부의 슬랙(Slack), 웹훅, 또는 SIEM 솔루션으로 알림이 자동 전송된다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
         "1. 외부 웹훅 URL 설정 기능 연동",
         "2. 에이전트 정책 위반 모의 이벤트 발생",
         "3. 해당 웹훅으로 JSON 페이로드가 정상 전송되었는지 확인"
       ],
-      "evidence": [],
-      "notes": "Kafka, AWS EventBridge 또는 Google Pub/Sub 연동."
+      "evidence": [
+        "✅ [2026-09-03] SECURITY_WEBHOOK_URL/SECRET/TIMEOUT 설정과 production HTTPS 검증 구현.",
+        "✅ 정책 위반 및 connector.test 이벤트를 HMAC-SHA256 서명 JSON webhook으로 전송.",
+        "✅ 커넥터 상태/테스트 API와 Operations UI, 서명/실패-격리 단위 테스트 구현."
+      ],
+      "notes": "Webhook/SIEM connector MVP 완료. Kafka/EventBridge/PubSub fan-out은 별도 adapter 확장 지점."
     },
     {
       "id": "PH4-ops-001",
@@ -525,14 +554,19 @@
       "area": "advanced",
       "title": "자동화된 Schema_ver 관리 및 마이그레이션",
       "user_visible_behavior": "에이전트 대화 스키마(구조)가 변경되더라도, 과거 버전(schema_ver)의 대화 기록이 깨지지 않고 하위 호환성을 유지하여 표시된다.",
-      "status": "not_started",
+      "status": "passing",
       "verification": [
         "1. v1 스키마로 대화 생성",
         "2. 시스템을 v2 스키마로 업데이트 (JSON 구조 변경)",
         "3. 과거 v1 대화 기록을 조회했을 때 어댑터 로직을 통해 렌더링 에러 없이 표시되는지 확인"
       ],
-      "evidence": [],
-      "notes": "엔터프라이즈 운영의 안정성을 위한 핵심. CONVERSATIONS 테이블의 schema_ver 필드 적극 활용."
+      "evidence": [
+        "✅ [2026-09-03] 신규 broker Interaction을 schema_ver=2.0으로 기록.",
+        "✅ v1 tool/input/output 필드를 현재 v2 payload로 변환하는 read adapter와 v2 idempotent normalization 구현.",
+        "✅ v1 조회, v2 조회, 미지원 major fail-closed 테스트와 Execution Tree UI schema source/current 표시 구현.",
+        "✅ 과거 DB의 workspace member creator/developer drift를 Alembic 015에서 데이터 보존형 정규화하고 회귀 테스트 추가."
+      ],
+      "notes": "지원 major는 1/2이며 알 수 없는 major는 잘못 렌더링하지 않고 명시적으로 실패한다."
     }
   ]
 }

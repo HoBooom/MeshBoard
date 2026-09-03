@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
   operationsApi,
   Activity,
@@ -16,6 +17,10 @@ import {
   AgentStatus,
   HealthComponent,
   OperationsOverview,
+  ExecutionNode,
+  ExecutionSummary,
+  OperationsAnalytics,
+  ConnectorStatus,
 } from '../api/operations';
 
 const AGENT_STATUSES: AgentStatus[] = ['ACTIVE', 'DRAFT', 'SUSPENDED', 'DEPRECATED'];
@@ -61,23 +66,41 @@ export default function OperationsPage() {
   const [health, setHealth] = useState<HealthComponent[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [executions, setExecutions] = useState<ExecutionSummary[]>([]);
+  const [selectedExecution, setSelectedExecution] = useState<string | null>(null);
+  const [executionNodes, setExecutionNodes] = useState<ExecutionNode[]>([]);
+  const [analytics, setAnalytics] = useState<OperationsAnalytics | null>(null);
+  const [connector, setConnector] = useState<ConnectorStatus | null>(null);
+  const [connectorResult, setConnectorResult] = useState<string | null>(null);
 
   const reload = async () => {
     setLoading(true);
     try {
-      const [ov, ag, ac, he] = await Promise.all([
+      const [ov, ag, ac, he, ex, an, connectorStatus] = await Promise.all([
         operationsApi.getOverview(),
         operationsApi.getAgents(),
         operationsApi.getActivity(20),
         operationsApi.getHealth(),
+        operationsApi.getExecutions(),
+        operationsApi.getAnalytics(),
+        operationsApi.getSecurityConnector(),
       ]);
       setOverview(ov);
       setAgents(ag);
       setActivity(ac);
       setHealth(he);
+      setExecutions(ex);
+      setAnalytics(an);
+      setConnector(connectorStatus);
     } finally {
       setLoading(false);
     }
+  };
+
+  const openExecution = async (executionTreeId: string) => {
+    setSelectedExecution(executionTreeId);
+    const tree = await operationsApi.getExecutionTree(executionTreeId);
+    setExecutionNodes(tree.nodes);
   };
 
   useEffect(() => {
@@ -94,6 +117,13 @@ export default function OperationsPage() {
     } finally {
       setSavingId(null);
     }
+  };
+
+  const testConnector = async () => {
+    const result = await operationsApi.testSecurityConnector();
+    setConnectorResult(
+      !result.configured ? '환경 변수에 웹훅 URL이 설정되지 않았습니다.' : result.delivered ? `전송 성공 (${result.status_code})` : `전송 실패 (${result.error ?? '응답 없음'})`
+    );
   };
 
   return (
@@ -149,7 +179,9 @@ export default function OperationsPage() {
                         </td>
                         <td className="px-4 py-4 text-[13px] text-white/60">{a.owner_name ?? '—'}</td>
                         <td className="px-4 py-4 text-[13px] text-white/60">{a.tool_count}개</td>
-                        <td className="px-4 py-4 text-[13px] text-white/50">{relativeTime(a.last_activity)}</td>
+                        <td className="px-4 py-4 text-[13px] text-white/50">
+                          {a.active_executions > 0 ? <span className="text-apple-blue">실행 중 {a.active_executions}건</span> : relativeTime(a.last_activity)}
+                        </td>
                         <td className="px-4 py-4">
                           <span className={`px-2.5 py-1 text-[11px] font-medium rounded-full border whitespace-nowrap ${meta.cls}`}>{meta.label}</span>
                         </td>
@@ -173,6 +205,81 @@ export default function OperationsPage() {
             </div>
           </section>
 
+          <section>
+            <div className="mb-4 flex items-end justify-between gap-4">
+              <div>
+                <h3 className="text-[21px] font-semibold text-white tracking-[0.231px]">A2A 실행 트리</h3>
+                <p className="mt-1 text-[13px] text-white/40">메시지에서 에이전트 위임과 도구 실행까지 ltree 경로로 추적합니다.</p>
+              </div>
+              <span className="text-xs text-white/30">최근 {executions.length}건</span>
+            </div>
+            <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
+              <div className="glass-card max-h-[440px] overflow-y-auto p-3">
+                {executions.map((execution) => (
+                  <button key={execution.execution_tree_id} onClick={() => openExecution(execution.execution_tree_id)} className={`mb-2 w-full rounded-xl border p-3 text-left last:mb-0 ${selectedExecution === execution.execution_tree_id ? 'border-apple-blue/50 bg-apple-blue/10' : 'border-white/5 bg-black/10 hover:bg-white/5'}`}>
+                    <div className="flex items-center justify-between gap-2"><span className="truncate text-sm font-medium text-white">{execution.actor_name}</span><span className={execution.state === 'FAILED' ? 'text-xs text-[#ff453a]' : 'text-xs text-[#30d158]'}>{execution.state}</span></div>
+                    <p className="mt-1 truncate text-xs text-white/45">{execution.prompt || '메시지 실행'}</p>
+                    <p className="mt-2 text-[11px] text-white/30">노드 {execution.node_count} · {execution.duration_ms ?? 0}ms · {relativeTime(execution.started_at)}</p>
+                  </button>
+                ))}
+                {executions.length === 0 && <p className="py-12 text-center text-sm text-white/35">메시지를 실행하면 트리가 생성됩니다.</p>}
+              </div>
+              <div className="glass-card min-h-[240px] p-5">
+                {executionNodes.length === 0 ? <p className="py-16 text-center text-sm text-white/35">왼쪽 실행을 선택해 위임 체인을 확인하세요.</p> : (
+                  <div className="space-y-2">
+                    {executionNodes.map((node) => (
+                      <div key={node.interaction_id} className="relative rounded-xl border border-white/5 bg-black/10 p-3" style={{ marginLeft: `${Math.min(node.tree_depth, 4) * 24}px` }}>
+                        {node.tree_depth > 0 && <span className="absolute -left-4 top-0 h-1/2 w-3 rounded-bl-lg border-b border-l border-white/15" />}
+                        <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-medium text-white">{node.actor_name}{node.target_name ? ` → ${node.target_name}` : ''}</p><span className="rounded-full bg-white/5 px-2 py-0.5 text-[11px] text-white/45">{node.kind}</span></div>
+                        <p className="mt-1 text-xs text-white/40">{node.payload.tool?.name || node.payload.reasoning || node.payload.output || node.error_message || node.state}</p>
+                        <p className="mt-1 text-[10px] text-white/20">schema {node.payload.source_schema_version} → {node.payload.schema_version}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <div className="mb-4">
+              <h3 className="text-[21px] font-semibold text-white tracking-[0.231px]">모델·병렬 실행 분석</h3>
+              <p className="mt-1 text-[13px] text-white/40">모델별 토큰 사용량과 병렬 그룹의 wall time 절감 효과입니다.</p>
+            </div>
+            <div className="grid gap-4 xl:grid-cols-2">
+              <div className="glass-card h-[300px] p-5">
+                <p className="mb-4 text-sm font-medium text-white/75">모델별 토큰</p>
+                {analytics?.models.length ? (
+                  <ResponsiveContainer width="100%" height="85%">
+                    <BarChart data={analytics.models}>
+                      <CartesianGrid stroke="rgba(255,255,255,.06)" vertical={false} />
+                      <XAxis dataKey="model" tick={{ fill: 'rgba(255,255,255,.45)', fontSize: 10 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill: 'rgba(255,255,255,.4)', fontSize: 10 }} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={{ background: '#202020', border: '1px solid rgba(255,255,255,.1)', borderRadius: 10 }} />
+                      <Bar dataKey="token_input" name="입력" stackId="tokens" fill="#0a84ff" />
+                      <Bar dataKey="token_output" name="출력" stackId="tokens" fill="#64d2ff" radius={[5, 5, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : <p className="py-24 text-center text-sm text-white/30">모델 사용 데이터가 없습니다.</p>}
+              </div>
+              <div className="glass-card h-[300px] p-5">
+                <p className="mb-4 text-sm font-medium text-white/75">병렬 실행 시간</p>
+                {analytics?.parallel_groups.length ? (
+                  <ResponsiveContainer width="100%" height="85%">
+                    <BarChart data={analytics.parallel_groups.map((group) => ({ ...group, group: group.parallel_group_id.slice(0, 6) }))}>
+                      <CartesianGrid stroke="rgba(255,255,255,.06)" vertical={false} />
+                      <XAxis dataKey="group" tick={{ fill: 'rgba(255,255,255,.45)', fontSize: 10 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fill: 'rgba(255,255,255,.4)', fontSize: 10 }} axisLine={false} tickLine={false} />
+                      <Tooltip contentStyle={{ background: '#202020', border: '1px solid rgba(255,255,255,.1)', borderRadius: 10 }} />
+                      <Bar dataKey="wall_duration_ms" name="실제 wall time" fill="#30d158" radius={[5, 5, 0, 0]} />
+                      <Bar dataKey="saved_duration_ms" name="절감 시간" fill="#bf5af2" radius={[5, 5, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : <p className="py-24 text-center text-sm text-white/30">병렬 그룹 데이터가 없습니다.</p>}
+              </div>
+            </div>
+          </section>
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* System health */}
             <section>
@@ -187,6 +294,10 @@ export default function OperationsPage() {
                     <span className="text-[12px] text-white/45">{c.detail}</span>
                   </div>
                 ))}
+                <div className="flex items-center justify-between gap-3 pt-3">
+                  <div className="min-w-0"><p className="truncate text-xs text-white/45">{connector?.endpoint || 'SECURITY_WEBHOOK_URL 미설정'}</p>{connectorResult && <p className="mt-1 text-[11px] text-white/35">{connectorResult}</p>}</div>
+                  <button onClick={testConnector} className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white/70 hover:bg-white/15">테스트 전송</button>
+                </div>
               </div>
             </section>
 

@@ -15,6 +15,8 @@ export interface AgentCard {
   roles: string[];
   tools: string[];
   created_at: string;
+  certifications?: Array<{ id: string; name: string; state: string }>;
+  trust_level?: 'certified' | 'unverified';
 }
 
 export const getAgents = async (q?: string, category?: string): Promise<AgentCard[]> => {

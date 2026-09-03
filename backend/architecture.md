@@ -25,9 +25,11 @@ The allow-list check is an enforcement boundary, not only a prompt instruction. 
 
 `MemorySaver` supports interrupt/resume only while the API process is alive. The response reports `durable=false` so clients cannot mistake it for restart-safe execution. Production persistence should replace it with a database-backed LangGraph checkpointer and define retention and ownership rules for thread IDs.
 
-## Message routing
+## Message routing and execution trace
 
-Messages are persisted as a header plus an inline JSON body reference. Workspace messages are matched by direct mention first and subscription edges second. Receipts record the routing decision.
+Messages are persisted as a header plus an inline JSON body reference. Workspace messages are matched in this order: direct mention, explicit agent ID/role selectors, then subscription edges. Receipts record the routing decision. A workspace-level conversation is created automatically when a generic message does not already belong to a goal conversation.
+
+Every routed request writes a schema `2.0` root interaction and child handoff/reasoning/tool nodes. `execution_tree_id`, `tree_depth` and PostgreSQL `ltree` paths provide stable hierarchy queries. The read adapter normalizes historical schema `1.x` interactions into the current response without rewriting source records.
 
 Matched agents are invoked concurrently with two safeguards:
 
@@ -41,12 +43,24 @@ Database writes still happen sequentially through one `AsyncSession`. The HTTP r
 - JWT identifies users; route dependencies enforce RBAC.
 - Agent ownership is checked before direct invocation or agent-originated publishing.
 - Agent tool calls are constrained by the stored per-agent allow-list.
+- Only validated `ACTIVE` policies can be linked. Runtime enforcement handles blocked terms, input size, required certifications, tool allow/deny sets and optional PII masking.
+- Marketplace responses expose only non-expired passed certifications as trust badges.
+- Policy violations can emit a signed security webhook; production mode requires HTTPS.
 - `ENVIRONMENT=production` rejects the development JWT secret and wildcard CORS.
 - External HTTP tools remain privileged configuration and require network egress policy before production use.
 
-## Simulation boundary
+## Sandbox and simulation boundary
+
+Sandbox workspaces have a dedicated `SANDBOX` state and persist only the input event, deterministic routing decisions and routed IDs in `sandbox_runs`. A database check requires `production_write_count = 0`; sandbox execution never calls tools or writes operational message/interaction rows.
 
 CityLearn and CHESCA are demonstration runtimes behind service interfaces. They are not imported into frontend code. CPU-bound simulation calls use thread offloading where they would otherwise block the FastAPI event loop.
+
+## Operations and retention
+
+- Lifecycle changes signal process-local cooperative cancellation before persisting `SUSPENDED`/`ACTIVE` state.
+- Model token totals and parallel-group wall/serial durations are aggregated on demand; optional rates supply estimated USD cost.
+- Completed, failed and cancelled interactions older than a selected retention period move transactionally to `interaction_archive`.
+- A PostgreSQL trigger rejects archive UPDATE and DELETE operations after migration.
 
 ## Known deliberate limitations
 
@@ -55,4 +69,5 @@ CityLearn and CHESCA are demonstration runtimes behind service interfaces. They 
 - Request-scoped broker execution rather than a durable worker queue
 - Poll/refetch UI updates rather than SSE/WebSocket
 - Mock OIDC provider rather than a configured enterprise IdP
-- Trust policy CRUD exists, but policy enforcement is not yet wired into every tool/action
+- Pause/Kill is cooperative at the API wait boundary; an already-running synchronous provider request may finish in its worker thread and its result is discarded
+- Analytics use request-time aggregation rather than a materialized view

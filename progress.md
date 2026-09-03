@@ -5,12 +5,45 @@
 - **Repository root**: `/Users/hobongs/Desktop/HoBong_study/26-1/meshboard`
 - **Standard startup path**: `./init.sh` (Node.js 22.13+, Docker Desktop, uv)
 - **Standard verification path**: `SKIP_DB=1 SKIP_INSTALL=1 ./init.sh` 또는 GitHub Actions CI
-- **Current highest-priority unfinished feature**: `PH3-ui-creator-002` (priority 11 — 시나리오 기반 Sandbox)
-- **Current blocker**: 없음
+- **Current highest-priority unfinished feature**: 없음 (`feature_list.json` 18/18 passing)
+- **Current blocker**: 코드/DB 기준 없음. 현재 로컬 RunYour 계정은 credit 부족(HTTP 402)이므로 live LLM 응답 데모 전 충전 또는 새 키가 필요함
 
 ---
 
 ## Session Log
+
+### Session 011
+- **Date**: 2026-09-03
+- **Goal**: 원래 Agent Mesh 설계에 맞춘 포트폴리오 v1.0 완성 및 브랜치 정리
+- **Completed**:
+  - 운영 메시지/Interaction과 분리된 `SANDBOX` 워크스페이스, 결정론적 라우팅·handoff 시뮬레이터, 실행 로그 API/UI 구현
+  - 정책 JSON 검증과 ACTIVE-only 연결, 차단어·입력 길이·필수 인증·PII·도구 범위의 direct/broker 런타임 강제 적용
+  - 만료되지 않은 PASSED 인증을 Marketplace trust badge로 노출
+  - process-local cooperative Pause/Kill 신호, active execution count/control generation API/UI 구현
+  - schema 2.0 Interaction root/handoff/reasoning/tool `ltree` 실행 트리 기록과 조회 UI 구현
+  - retention 기반 Interaction Archive 이관 서비스와 UPDATE/DELETE 거부 PostgreSQL trigger 구현
+  - 모델 토큰/비용 및 parallel group wall/serial/saved duration 분석 API와 Recharts UI 구현
+  - HMAC-SHA256 보안 이벤트 webhook, production HTTPS 검증, connector 상태/테스트 UI 구현
+  - interaction schema v1→v2 read adapter 및 unknown major fail-closed 구현
+  - 기존 DB의 `creator`/코드의 `developer` workspace role drift를 데이터 보존형 Alembic `015_member_role`로 정규화
+  - 저장만 되던 메시지 `target_ids`/`target_roles`를 실제 라우팅 우선순위에 연결
+  - backend/frontend 버전을 `1.0.0`으로 맞추고 README, backend architecture, portfolio demo guide 갱신
+- **Verification run**:
+  - ✅ backend `python -m unittest discover -s tests -v`: 58 tests passed
+  - ✅ frontend ESLint: 0 errors, 0 warnings
+  - ✅ frontend TypeScript/Vite production build 성공 (780 modules)
+  - ✅ Alembic head `015_member_role`; legacy memberships `creator` 8건 포함 전체를 `developer`로 데이터 보존 정규화
+  - ✅ Sandbox E2E: direct mention 1개 라우팅, `production_write_count=0`, 운영 Interaction 0→0
+  - ✅ Policy E2E: 임시 ACTIVE 정책 연결 시 provider 호출 전 403, 연결 해제 후 REVOKED 정리
+  - ✅ Runtime E2E: ACTIVE→SUSPENDED→ACTIVE 원상 복원, control generation 0→1→2
+  - ✅ Explicit target E2E: `target_ids`로 agent 1개/receipt 1개, 실행 트리 root+handoff 2개와 `matched explicit target` 확인
+  - ✅ Archive dry-run 성공 및 `interaction_archive_immutable` trigger enabled 확인
+  - ✅ health 응답 version `1.0.0`; `git diff --check` 통과
+- **Known risk or unresolved issue**:
+  - LangGraph checkpoint와 Pause/Kill registry는 process-local이며 durable worker/분산 취소는 운영 확장 범위
+  - 현재 로컬 RunYour API key는 credit 부족 HTTP 402; 실패는 실행 트리에 정상 기록되지만 성공 응답 시연에는 유효 credit 필요
+  - 로컬 Node 20.17은 Vite 권장 버전보다 낮아 경고가 발생함. CI와 표준 `init.sh`는 Node 22.13+로 고정
+- **Next best step**: feature branch를 GitHub에 push하고 CI가 통과한 PR을 `main`에 병합한 뒤 v1.0.0 tag/release 생성
 
 ### Session 010
 - **Date**: 2026-09-02

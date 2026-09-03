@@ -1,18 +1,22 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
+from datetime import datetime, timezone
+
 from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.agent import Agent
-from app.schemas.agent import AgentRead
+from app.models.certification import AgentCertification, Certification
+from app.schemas.marketplace import MarketplaceAgentRead
+from app.schemas.trust import TrustBadge
 from app.schemas.auth import UserResponse
 from app.core.security import get_current_user
 
 router = APIRouter(prefix="/marketplace", tags=["marketplace"])
 
-@router.get("/agents", response_model=List[AgentRead])
+@router.get("/agents", response_model=List[MarketplaceAgentRead])
 async def get_marketplace_agents(
     q: Optional[str] = Query(None, description="검색어 (이름, 설명, 목적)"),
     category: Optional[str] = Query(None, description="카테고리 필터"),
@@ -55,4 +59,37 @@ async def get_marketplace_agents(
     result = await db.execute(stmt)
     agents = result.scalars().all()
     
-    return agents
+    agent_ids = [agent.agent_id for agent in agents]
+    certs_by_agent = {}
+    if agent_ids:
+        now = datetime.now(timezone.utc)
+        cert_rows = await db.execute(
+            select(AgentCertification.agent_id, Certification)
+            .join(
+                Certification,
+                Certification.certification_id == AgentCertification.certification_id,
+            )
+            .where(
+                AgentCertification.agent_id.in_(agent_ids),
+                Certification.state == "PASSED",
+                or_(Certification.expires_at.is_(None), Certification.expires_at > now),
+            )
+        )
+        for agent_id, certification in cert_rows.all():
+            certs_by_agent.setdefault(agent_id, []).append(
+                TrustBadge(
+                    id=certification.certification_id,
+                    name=certification.name,
+                    state=certification.state,
+                )
+            )
+
+    return [
+        MarketplaceAgentRead.model_validate(agent).model_copy(
+            update={
+                "certifications": certs_by_agent.get(agent.agent_id, []),
+                "trust_level": "certified" if certs_by_agent.get(agent.agent_id) else "unverified",
+            }
+        )
+        for agent in agents
+    ]

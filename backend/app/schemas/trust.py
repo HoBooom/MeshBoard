@@ -28,6 +28,16 @@ class PolicyStatusUpdate(BaseModel):
     status: str = Field(..., max_length=20)
 
 
+class PolicyTemplateValidate(BaseModel):
+    template: Dict[str, Any] = Field(default_factory=dict)
+
+
+class PolicyTemplateValidationResult(BaseModel):
+    valid: bool
+    errors: List[str] = Field(default_factory=list)
+    supported_fields: List[str] = Field(default_factory=list)
+
+
 class PolicyRead(BaseModel):
     policy_id: uuid.UUID
     name: str

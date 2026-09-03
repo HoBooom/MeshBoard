@@ -9,6 +9,7 @@ from .conversation import Conversation
 from .message import Message, MessageHeader, MessageReceipt
 from .interaction import Interaction, InteractionArchive
 from .notice import Notice
+from .sandbox import SandboxRun
 
 __all__ = [
     "User", "UserRole",
@@ -19,5 +20,5 @@ __all__ = [
     "Conversation",
     "Message", "MessageHeader", "MessageReceipt",
     "Interaction", "InteractionArchive",
-    "Notice",
+    "Notice", "SandboxRun",
 ]

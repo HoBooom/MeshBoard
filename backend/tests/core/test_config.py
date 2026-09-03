@@ -8,6 +8,13 @@ from app.core.config import DEVELOPMENT_JWT_SECRET, Settings
 
 
 class SettingsTests(unittest.TestCase):
+    def test_model_pricing_normalizes_numeric_rates(self) -> None:
+        config = Settings(
+            _env_file=None,
+            MODEL_PRICING_USD_PER_MILLION='{"test/model":{"input":1,"output":2.5}}',
+        )
+        self.assertEqual(config.model_pricing["test/model"]["output"], 2.5)
+
     def test_cors_origins_rejects_non_array_json(self) -> None:
         config = Settings(_env_file=None, CORS_ORIGINS='{"origin":"https://example.com"}')
 

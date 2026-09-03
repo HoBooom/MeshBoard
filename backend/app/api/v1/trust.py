@@ -38,9 +38,12 @@ from app.schemas.trust import (
     PolicyCreate,
     PolicyRead,
     PolicyStatusUpdate,
+    PolicyTemplateValidate,
+    PolicyTemplateValidationResult,
     TrustBadge,
     TrustOverview,
 )
+from app.services.policy_enforcement import SUPPORTED_POLICY_FIELDS, validate_policy_template
 
 router = APIRouter(prefix="/trust", tags=["trust"])
 
@@ -76,6 +79,20 @@ def _trust_level(certs: List[TrustBadge], policies: List[TrustBadge]) -> str:
 
 
 # ── Policies ──────────────────────────────────────────────────────
+@router.post("/policies/validate", response_model=PolicyTemplateValidationResult)
+async def validate_policy(
+    payload: PolicyTemplateValidate,
+    current_user: User = Depends(RequireTrustWrite),
+):
+    """정책 템플릿의 지원 필드와 값 타입을 활성화 전에 검증합니다."""
+    errors = validate_policy_template(payload.template)
+    return PolicyTemplateValidationResult(
+        valid=not errors,
+        errors=errors,
+        supported_fields=sorted(SUPPORTED_POLICY_FIELDS),
+    )
+
+
 @router.get("/policies", response_model=List[PolicyRead])
 async def list_policies(
     db: AsyncSession = Depends(get_db),
@@ -101,6 +118,9 @@ async def create_policy(
     """정책 신규 발급."""
     if payload.status not in POLICY_STATUSES:
         raise HTTPException(422, f"status 는 {sorted(POLICY_STATUSES)} 중 하나여야 합니다.")
+    template_errors = validate_policy_template(payload.template)
+    if template_errors:
+        raise HTTPException(422, {"message": "정책 템플릿 검증 실패", "errors": template_errors})
     policy = Policy(
         name=payload.name,
         purpose=payload.purpose,
@@ -130,6 +150,10 @@ async def update_policy_status(
     ).scalar_one_or_none()
     if policy is None:
         raise HTTPException(404, "정책을 찾을 수 없습니다.")
+    if payload.status == "ACTIVE":
+        template_errors = validate_policy_template(policy.template)
+        if template_errors:
+            raise HTTPException(422, {"message": "정책 템플릿 검증 실패", "errors": template_errors})
     policy.status = payload.status
     policy.updated_at = datetime.now(timezone.utc)
     await db.commit()
@@ -299,6 +323,8 @@ async def link_policy(
     ).scalar_one_or_none()
     if policy is None:
         raise HTTPException(404, "정책을 찾을 수 없습니다.")
+    if policy.status != "ACTIVE":
+        raise HTTPException(409, "활성 정책만 에이전트에 연결할 수 있습니다.")
     exists = (
         await db.execute(
             select(AgentPolicy).where(

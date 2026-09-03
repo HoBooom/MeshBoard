@@ -36,6 +36,15 @@ const navItems: NavItem[] = [
     ),
   },
   {
+    label: '마켓플레이스',
+    path: '/dashboard/marketplace',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9.75L5.25 4.5h13.5L21 9.75M4.5 10.5v8.25h15V10.5M9 18.75v-5.5h6v5.5M3 9.75a2.25 2.25 0 004.5 0 2.25 2.25 0 004.5 0 2.25 2.25 0 004.5 0 2.25 2.25 0 004.5 0" />
+      </svg>
+    ),
+  },
+  {
     label: '크리에이터',
     path: '/dashboard/creator',
     icon: (
@@ -54,6 +63,16 @@ const navItems: NavItem[] = [
       </svg>
     ),
     roles: ['governance', 'trust_ops', 'agent_owner', 'agent_engineer'],
+  },
+  {
+    label: '샌드박스',
+    path: '/dashboard/sandbox',
+    icon: (
+      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 3.5h4.5m-6 0h7.5M9 3.5v5l-4.75 8.25A2.5 2.5 0 006.42 20.5h11.16a2.5 2.5 0 002.17-3.75L15 8.5v-5M7.25 15h9.5" />
+      </svg>
+    ),
+    roles: ['agent_owner', 'agent_engineer', 'trust_ops', 'release_manager'],
   },
   {
     label: '운영 관리',

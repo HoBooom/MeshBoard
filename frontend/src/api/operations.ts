@@ -28,6 +28,8 @@ export interface AgentOps {
   tool_count: number;
   updated_at: string;
   last_activity: string | null;
+  active_executions: number;
+  control_generation: number;
 }
 
 export interface Activity {
@@ -48,6 +50,71 @@ export interface HealthComponent {
   detail: string;
 }
 
+export interface ExecutionSummary {
+  execution_tree_id: string;
+  root_interaction_id: string;
+  conversation_id: string;
+  actor_name: string;
+  prompt: string | null;
+  state: string;
+  node_count: number;
+  duration_ms: number | null;
+  started_at: string;
+}
+
+export interface ExecutionNode {
+  interaction_id: string;
+  parent_id: string | null;
+  execution_tree_id: string;
+  tree_depth: number;
+  tree_path: string;
+  actor_name: string;
+  target_name: string | null;
+  kind: string;
+  state: string;
+  duration_ms: number | null;
+  reasoning_trace: string | null;
+  results: string | null;
+  tool_name: string | null;
+  error_message: string | null;
+  start_timestamp: string;
+  payload: {
+    schema_version: string;
+    source_schema_version: string;
+    input?: string | null;
+    output?: string | null;
+    reasoning?: string | null;
+    tool?: { name?: string | null; arguments?: unknown; result?: unknown } | null;
+    metadata?: Record<string, unknown>;
+  };
+}
+
+export interface OperationsAnalytics {
+  models: Array<{
+    model: string;
+    execution_count: number;
+    failed_count: number;
+    token_input: number;
+    token_output: number;
+    total_tokens: number;
+    average_duration_ms: number;
+    estimated_cost_usd: number | null;
+  }>;
+  parallel_groups: Array<{
+    parallel_group_id: string;
+    execution_count: number;
+    wall_duration_ms: number;
+    serial_duration_ms: number;
+    saved_duration_ms: number;
+  }>;
+}
+
+export interface ConnectorStatus {
+  configured: boolean;
+  endpoint: string | null;
+  production_https_required: boolean;
+}
+
 export const operationsApi = {
   getOverview: () =>
     client.get<OperationsOverview>('/operations/overview').then((r) => r.data),
@@ -64,4 +131,14 @@ export const operationsApi = {
     client
       .get<{ components: HealthComponent[] }>('/operations/health')
       .then((r) => r.data.components),
+  getExecutions: (limit = 20) =>
+    client.get<ExecutionSummary[]>('/operations/executions', { params: { limit } }).then((r) => r.data),
+  getExecutionTree: (executionTreeId: string) =>
+    client.get<{ execution_tree_id: string; nodes: ExecutionNode[] }>(`/operations/executions/${executionTreeId}`).then((r) => r.data),
+  getAnalytics: () =>
+    client.get<OperationsAnalytics>('/operations/analytics').then((r) => r.data),
+  getSecurityConnector: () =>
+    client.get<ConnectorStatus>('/operations/connectors/security-webhook').then((r) => r.data),
+  testSecurityConnector: () =>
+    client.post<{ configured: boolean; delivered: boolean; status_code: number | null; error?: string }>('/operations/connectors/security-webhook/test').then((r) => r.data),
 };

@@ -11,6 +11,8 @@ import asyncio
 import json
 import logging
 import re
+import time
+import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -21,19 +23,35 @@ from app.models.agent import Agent
 from app.core.config import settings
 from app.models.message import Message, MessageHeader, MessageReceipt
 from app.models.workspace import WorkspaceAgent, WorkspaceEdge, WorkspaceNode
+from app.models.workspace import Workspace
+from app.models.conversation import Conversation
+from app.models.interaction import Interaction
 from app.schemas.message import PublishMessageRequest
 from app.services.agent_runtime import AGENT_INVALID_RESPONSE_MESSAGE, invoke_agent
+from app.services.policy_enforcement import resolve_agent_policy
+from app.services.security_events import emit_security_event
+from app.services.schema_compat import CURRENT_INTERACTION_SCHEMA
+from sqlalchemy_utils import Ltree
 
 
 MENTION_RE = re.compile(r"(?<!\S)@([^\s@]+)")
 logger = logging.getLogger(__name__)
 
 
-async def _invoke_routed_agent(agent_invoker, agent: Agent, user_message: str, semaphore) -> dict:
+async def _invoke_routed_agent(
+    agent_invoker,
+    agent: Agent,
+    user_message: str,
+    semaphore,
+    allowed_tool_ids_override=None,
+) -> dict:
     """Bound broker fan-out so one message cannot exhaust LLM connections."""
     async with semaphore:
+        kwargs = {"agent": agent, "user_message": user_message}
+        if agent_invoker is invoke_agent and allowed_tool_ids_override is not None:
+            kwargs["allowed_tool_ids_override"] = allowed_tool_ids_override
         return await asyncio.wait_for(
-            agent_invoker(agent=agent, user_message=user_message),
+            agent_invoker(**kwargs),
             timeout=settings.AGENT_INVOKE_TIMEOUT_SECONDS,
         )
 
@@ -60,6 +78,25 @@ def _message_text_from_body_ref(body_ref: str) -> str:
 
 def _mention_key(display_name: str) -> str:
     return re.sub(r"\s+", "_", display_name.strip()).lower()
+
+
+def _explicit_agent_targets(
+    workspace_agent_ids: list,
+    agent_roles: dict,
+    target_ids: list,
+    target_roles: list[str],
+) -> list:
+    """Resolve explicit selectors while preserving workspace placement order."""
+    requested_ids = set(target_ids or [])
+    requested_roles = {role.casefold() for role in (target_roles or []) if role.strip()}
+    return [
+        agent_id
+        for agent_id in workspace_agent_ids
+        if agent_id in requested_ids
+        or requested_roles.intersection(
+            str(role).casefold() for role in agent_roles.get(agent_id, [])
+        )
+    ]
 
 
 async def _direct_mentioned_targets(
@@ -112,6 +149,36 @@ async def publish_message_header(
     sender_name: Optional[str],
 ) -> MessageHeader:
     """검증된 발행 요청을 MESSAGE_HEADERS 행으로 저장합니다."""
+    conversation_id = payload.conversation_id
+    if payload.workspace_id is not None and conversation_id is None:
+        conversation = (
+            await db.execute(
+                select(Conversation)
+                .where(
+                    Conversation.workspace_id == payload.workspace_id,
+                    Conversation.role == "workspace",
+                    Conversation.state == "ACTIVE",
+                )
+                .order_by(Conversation.started_at)
+            )
+        ).scalars().first()
+        if conversation is None:
+            workspace = (
+                await db.execute(
+                    select(Workspace).where(Workspace.workspace_id == payload.workspace_id)
+                )
+            ).scalar_one()
+            conversation = Conversation(
+                workspace_id=workspace.workspace_id,
+                initiator_id=workspace.owner_id,
+                name=f"{workspace.name or 'Workspace'} activity",
+                role="workspace",
+                state="ACTIVE",
+            )
+            db.add(conversation)
+            await db.flush()
+        conversation_id = conversation.conversation_id
+
     header = MessageHeader(
         sender_id=sender_id,
         sender_type=payload.sender_type,
@@ -125,7 +192,7 @@ async def publish_message_header(
         scope=payload.scope,
         execution_tree_id=payload.execution_tree_id,
         workspace_id=payload.workspace_id,
-        conversation_id=payload.conversation_id,
+        conversation_id=conversation_id,
         body_ref=build_inline_body_ref(payload.payload),
         expires_at=payload.expires_at,
         processed_count=0,
@@ -252,16 +319,20 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
             )
         ).scalars().all()
     )
-    workspace_agent_ids = list(
+    active_agents = list(
         (
             await db.execute(
-                select(Agent.agent_id).where(
+                select(Agent).where(
                     Agent.agent_id.in_(all_workspace_agent_ids),
                     Agent.status == "ACTIVE",
                 )
             )
         ).scalars().all()
     )
+    active_agent_by_id = {agent.agent_id: agent for agent in active_agents}
+    workspace_agent_ids = [
+        agent_id for agent_id in all_workspace_agent_ids if agent_id in active_agent_by_id
+    ]
     workspace_agent_id_set = set(workspace_agent_ids)
     has_direct_mention, matched_agent_ids, matched_user_ids = await _direct_mentioned_targets(
         db,
@@ -269,10 +340,40 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
         header.body_ref,
         workspace_agent_id_set,
     )
-    route_reason = "matched direct @mention" if matched_agent_ids else "matched workspace subscription edge"
+    has_explicit_selector = bool(header.target_ids or header.target_roles)
+    if not has_direct_mention and has_explicit_selector:
+        matched_agent_ids = _explicit_agent_targets(
+            workspace_agent_ids,
+            {
+                agent_id: list(active_agent_by_id[agent_id].roles or [])
+                for agent_id in workspace_agent_ids
+            },
+            list(header.target_ids or []),
+            list(header.target_roles or []),
+        )
+        if header.target_ids:
+            matched_user_ids = list(
+                (
+                    await db.execute(
+                        select(WorkspaceNode.ref_id).where(
+                            WorkspaceNode.workspace_id == header.workspace_id,
+                            WorkspaceNode.node_type == "user",
+                            WorkspaceNode.ref_id.in_(header.target_ids),
+                        )
+                    )
+                ).scalars().all()
+            )
+
+    route_reason = (
+        "matched direct @mention"
+        if has_direct_mention
+        else "matched explicit target"
+        if has_explicit_selector
+        else "matched workspace subscription edge"
+    )
     receipt_ids = []
 
-    if not has_direct_mention and header.sender_type in {"user", "agent"}:
+    if not has_direct_mention and not has_explicit_selector and header.sender_type in {"user", "agent"}:
         sender_node = (
             await db.execute(
                 select(WorkspaceNode).where(
@@ -302,6 +403,60 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
                 if agent_id in workspace_agent_id_set
             ]
 
+    now = datetime.now(timezone.utc)
+    root_id = uuid.uuid4()
+    execution_tree_id = header.execution_tree_id or uuid.uuid4()
+    header.execution_tree_id = execution_tree_id
+    root_interaction = Interaction(
+        interaction_id=root_id,
+        schema_ver=CURRENT_INTERACTION_SCHEMA,
+        conversation_id=header.conversation_id,
+        execution_tree_id=execution_tree_id,
+        tree_depth=0,
+        tree_path=Ltree(root_id.hex),
+        delegation_type="user_request" if header.sender_type == "user" else "peer",
+        start_timestamp=header.sent_at,
+        actor_type=header.sender_type,
+        actor_id=header.sender_id,
+        actor_name=header.sender_name or header.sender_type,
+        target_type="broadcast",
+        kind="message",
+        prompt=_message_text_from_body_ref(header.body_ref)[:4000],
+        involved_agents=list(matched_agent_ids),
+        state="RUNNING",
+        metadata_={"message_id": str(header.message_id), "routing_reason": route_reason},
+    )
+    db.add(root_interaction)
+    await db.flush()
+
+    handoff_by_agent = {}
+    for agent_id in matched_agent_ids:
+        handoff_id = uuid.uuid4()
+        handoff = Interaction(
+            interaction_id=handoff_id,
+            schema_ver=CURRENT_INTERACTION_SCHEMA,
+            conversation_id=header.conversation_id,
+            parent_id=root_id,
+            execution_tree_id=execution_tree_id,
+            tree_depth=1,
+            tree_path=Ltree(f"{root_id.hex}.{handoff_id.hex}"),
+            delegation_type="orchestration",
+            start_timestamp=now,
+            actor_type=header.sender_type,
+            actor_id=header.sender_id,
+            actor_name=header.sender_name or header.sender_type,
+            target_type="agent",
+            target_id=agent_id,
+            target_name=None,
+            kind="handoff",
+            involved_agents=[agent_id],
+            state="RUNNING",
+            metadata_={"reason": route_reason},
+        )
+        db.add(handoff)
+        handoff_by_agent[agent_id] = handoff
+    await db.flush()
+
     for agent_id in matched_agent_ids:
         receipt = MessageReceipt(
             message_id=header.message_id,
@@ -315,10 +470,9 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
 
     if matched_agent_ids:
         agents = {
-            agent.agent_id: agent
-            for agent in (
-                await db.execute(select(Agent).where(Agent.agent_id.in_(matched_agent_ids)))
-            ).scalars().all()
+            agent_id: active_agent_by_id[agent_id]
+            for agent_id in matched_agent_ids
+            if agent_id in active_agent_by_id
         }
         agent_nodes = {
             node.ref_id: node
@@ -341,21 +495,59 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
             if agent is None or agent_node is None:
                 continue
 
+            policy_decision = (
+                await resolve_agent_policy(db, agent, user_message)
+                if agent_invoker is invoke_agent
+                else None
+            )
+            if policy_decision is not None and not policy_decision.allowed:
+                await emit_security_event(
+                    "agent.policy_blocked",
+                    severity="high",
+                    attributes={
+                        "agent_id": str(agent.agent_id),
+                        "execution_tree_id": str(execution_tree_id),
+                        "policy_ids": list(policy_decision.applied_policy_ids),
+                        "violation_count": len(policy_decision.violations),
+                    },
+                )
+                handoff = handoff_by_agent[agent.agent_id]
+                handoff.target_name = agent.name
+                handoff.state = "CANCELLED"
+                handoff.complete_timestamp = datetime.now(timezone.utc)
+                handoff.error_code = "POLICY_BLOCKED"
+                handoff.error_message = "; ".join(policy_decision.violations)
+                await _publish_agent_workspace_message(
+                    db,
+                    header,
+                    agent,
+                    "활성 정책에 의해 요청 처리가 차단되었습니다.",
+                )
+                agent_node.status = "active"
+                agent_node.updated_at = datetime.now(timezone.utc)
+                continue
+            effective_message = policy_decision.message if policy_decision else user_message
+            effective_tools = policy_decision.effective_tool_ids if policy_decision else None
             agent_node.status = "processing"
             agent_node.updated_at = datetime.now(timezone.utc)
-            invocation_targets.append((agent, agent_node))
+            handoff = handoff_by_agent[agent.agent_id]
+            handoff.target_name = agent.name
+            invocation_targets.append(
+                (agent, agent_node, effective_message, effective_tools, time.perf_counter())
+            )
         await db.flush()
 
         semaphore = asyncio.Semaphore(settings.AGENT_INVOKE_MAX_CONCURRENCY)
         invocation_results = await asyncio.gather(
             *(
-                _invoke_routed_agent(agent_invoker, agent, user_message, semaphore)
-                for agent, _ in invocation_targets
+                _invoke_routed_agent(agent_invoker, agent, message, semaphore, effective_tools)
+                for agent, _, message, effective_tools, _ in invocation_targets
             ),
             return_exceptions=True,
         )
 
-        for (agent, agent_node), result in zip(invocation_targets, invocation_results):
+        for (agent, agent_node, _, _, started), result in zip(invocation_targets, invocation_results):
+            handoff = handoff_by_agent[agent.agent_id]
             try:
                 if isinstance(result, BaseException):
                     raise result
@@ -364,11 +556,51 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
                 answer = str(result.get("output") or "").strip() or AGENT_INVALID_RESPONSE_MESSAGE
                 await _publish_agent_workspace_message(db, header, agent, answer)
                 agent_node.status = "active"
+                handoff.state = "COMPLETED"
+                handoff.results = answer[:4000]
+                for index, step in enumerate(result.get("steps") or [], start=1):
+                    node = step.get("node")
+                    if node not in {"agent_node", "mcp_tool_node"}:
+                        continue
+                    step_id = uuid.uuid4()
+                    content = str(step.get("content") or "")[:4000]
+                    db.add(
+                        Interaction(
+                            interaction_id=step_id,
+                            schema_ver=CURRENT_INTERACTION_SCHEMA,
+                            conversation_id=header.conversation_id,
+                            parent_id=handoff.interaction_id,
+                            execution_tree_id=execution_tree_id,
+                            tree_depth=2,
+                            tree_path=Ltree(
+                                f"{root_id.hex}.{handoff.interaction_id.hex}.{step_id.hex}"
+                            ),
+                            delegation_type="pipeline",
+                            actor_type="agent",
+                            actor_id=agent.agent_id,
+                            actor_name=agent.name,
+                            kind="tool_result" if node == "mcp_tool_node" else "reasoning",
+                            step_id=index,
+                            results=content if node == "mcp_tool_node" else None,
+                            reasoning_trace=content if node == "agent_node" else None,
+                            tool_name=step.get("name"),
+                            parameters={"node": node},
+                            involved_agents=[agent.agent_id],
+                            state="COMPLETED",
+                            complete_timestamp=datetime.now(timezone.utc),
+                            model_used=result.get("model_used"),
+                        )
+                    )
             except Exception as exc:
                 logger.warning("Agent invocation failed: agent_id=%s error=%s", agent.agent_id, exc)
                 await _publish_agent_workspace_message(db, header, agent, AGENT_INVALID_RESPONSE_MESSAGE)
                 agent_node.status = "error"
+                handoff.state = "FAILED"
+                handoff.error_code = type(exc).__name__
+                handoff.error_message = str(exc)[:2000]
             finally:
+                handoff.complete_timestamp = datetime.now(timezone.utc)
+                handoff.duration_ms = round((time.perf_counter() - started) * 1000)
                 agent_node.updated_at = datetime.now(timezone.utc)
                 await db.flush()
     elif header.sender_type in {"user", "agent"} and not matched_user_ids:
@@ -384,6 +616,19 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
     ]
 
     header.processed_count = len(matched_agent_ids)
+    handoff_states = {handoff.state for handoff in handoff_by_agent.values()}
+    root_interaction.state = (
+        "FAILED"
+        if "FAILED" in handoff_states
+        else "CANCELLED"
+        if handoff_states == {"CANCELLED"}
+        else "COMPLETED"
+    )
+    root_interaction.complete_timestamp = datetime.now(timezone.utc)
+    root_interaction.duration_ms = max(
+        0,
+        round((root_interaction.complete_timestamp - root_interaction.start_timestamp).total_seconds() * 1000),
+    )
     await db.flush()
     return {
         "queued": True,

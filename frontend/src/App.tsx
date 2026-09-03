@@ -15,6 +15,8 @@ const CreatorPage = lazy(() => import('./pages/CreatorPage'));
 const WorkspacePage = lazy(() => import('./pages/WorkspacePage'));
 const TrustPage = lazy(() => import('./pages/TrustPage'));
 const OperationsPage = lazy(() => import('./pages/OperationsPage'));
+const SandboxPage = lazy(() => import('./pages/SandboxPage'));
+const MarketplacePage = lazy(() => import('./pages/MarketplacePage'));
 
 function RouteFallback() {
   return (
@@ -42,8 +44,9 @@ export default function App() {
         >
           <Route index element={<DashboardPage />} />
           <Route path="workspaces" element={<WorkspacePage />} />
-          <Route path="marketplace" element={<Navigate to="/dashboard/workspaces" replace />} />
+          <Route path="marketplace" element={<MarketplacePage />} />
           <Route path="creator" element={<CreatorPage />} />
+          <Route path="sandbox" element={<SandboxPage />} />
           <Route path="trust" element={<TrustPage />} />
           <Route path="operator" element={<OperationsPage />} />
         </Route>

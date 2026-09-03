@@ -19,12 +19,13 @@ from app.api.v1.messages import router as messages_router
 from app.api.v1.workspaces import router as workspaces_router
 from app.api.v1.trust import router as trust_router
 from app.api.v1.operations import router as operations_router
+from app.api.v1.sandbox import router as sandbox_router
 from app.core.config import settings
 
 app = FastAPI(
     title="MeshBoard API",
     description="AI Agent Mesh Management Platform",
-    version="0.1.0",
+    version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -49,6 +50,7 @@ app.include_router(messages_router, prefix="/api/v1")
 app.include_router(workspaces_router, prefix="/api/v1")
 app.include_router(trust_router, prefix="/api/v1")
 app.include_router(operations_router, prefix="/api/v1")
+app.include_router(sandbox_router, prefix="/api/v1")
 
 
 # ── Health Check ──────────────────────────────────────────────

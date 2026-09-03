@@ -73,6 +73,11 @@ export const trustApi = {
     client
       .patch<Policy>(`/trust/policies/${policyId}/status`, { status })
       .then((r) => r.data),
+  validatePolicy: (template: Record<string, unknown>) =>
+    client.post<{ valid: boolean; errors: string[]; supported_fields: string[] }>(
+      '/trust/policies/validate',
+      { template }
+    ).then((r) => r.data),
 
   getCertifications: () =>
     client.get<Certification[]>('/trust/certifications').then((r) => r.data),

@@ -25,6 +25,27 @@ fi
 
 echo "==> Working directory: $PWD"
 
+# ── Local LLM (optional) ────────────────────────────────────────────────────
+# 에이전트 실행은 기본적으로 로컬 Ollama(qwen2.5:7b)를 사용한다. 없어도 DB/API/테스트/보드는
+# 전부 동작하며, 에이전트를 실제로 invoke 할 때만 필요하다. 그래서 경고만 하고 진행한다.
+LLM_MODEL_NAME="${LLM_MODEL:-qwen2.5:7b}"
+if command -v ollama >/dev/null 2>&1; then
+  if ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$LLM_MODEL_NAME"; then
+    echo "==> [0/4] Local LLM ready: $LLM_MODEL_NAME"
+  elif [ "${PULL_MODEL:-0}" = "1" ]; then
+    echo "==> [0/4] Pulling local model: $LLM_MODEL_NAME"
+    ollama pull "$LLM_MODEL_NAME"
+  else
+    echo "==> [0/4] WARNING: Ollama installed but '$LLM_MODEL_NAME' is missing." >&2
+    echo "           Run 'ollama pull $LLM_MODEL_NAME' or 'PULL_MODEL=1 ./init.sh'." >&2
+    echo "           Agent invocation will fail until then; everything else still works." >&2
+  fi
+else
+  echo "==> [0/4] WARNING: Ollama not found — agent invocation will be unavailable." >&2
+  echo "           Install from https://ollama.com/download, then 'ollama pull $LLM_MODEL_NAME'." >&2
+  echo "           To use a hosted backend instead, set LLM_BASE_URL/LLM_MODEL in backend/.env." >&2
+fi
+
 if [ "${SKIP_DB:-0}" != "1" ]; then
   require_command docker
   if ! docker info >/dev/null 2>&1; then

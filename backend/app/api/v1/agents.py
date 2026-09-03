@@ -35,6 +35,9 @@ from app.schemas.agent import (
 )
 from app.services.agent_runtime import invoke_agent
 from app.services.tool_catalog import TOOL_REGISTRY, list_tool_descriptors
+from app.services.policy_enforcement import resolve_agent_policy
+from app.services.runtime_control import AgentExecutionCancelled
+from app.services.security_events import emit_security_event
 
 
 logger = logging.getLogger(__name__)
@@ -368,15 +371,40 @@ async def invoke(
             detail=f"status={agent.status} 에이전트는 실행할 수 없습니다.",
         )
 
+    policy_decision = await resolve_agent_policy(db, agent, payload.message)
+    if not policy_decision.allowed:
+        await emit_security_event(
+            "agent.policy_blocked",
+            severity="high",
+            attributes={
+                "agent_id": str(agent.agent_id),
+                "policy_ids": list(policy_decision.applied_policy_ids),
+                "violation_count": len(policy_decision.violations),
+            },
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "활성 정책에 의해 에이전트 실행이 차단되었습니다.",
+                "violations": list(policy_decision.violations),
+            },
+        )
+
     try:
         result = await invoke_agent(
             agent=agent,
-            user_message=payload.message,
+            user_message=policy_decision.message,
             model=payload.model,
             checkpoint_thread_id=payload.checkpoint_thread_id,
             resume=payload.resume,
             interrupt_after_node=payload.interrupt_after_node,
+            allowed_tool_ids_override=policy_decision.effective_tool_ids,
         )
+    except AgentExecutionCancelled as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

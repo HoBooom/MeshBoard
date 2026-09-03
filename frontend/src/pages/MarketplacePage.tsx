@@ -94,7 +94,12 @@ export default function MarketplacePage() {
                     <span className="text-[21px] font-semibold text-white">{agent.name.charAt(0)}</span>
                   </div>
                   <div>
-                    <h3 className="text-[17px] font-semibold text-white tracking-[-0.224px] leading-tight line-clamp-1">{agent.name}</h3>
+                    <div className="flex items-center gap-1.5">
+                      <h3 className="text-[17px] font-semibold text-white tracking-[-0.224px] leading-tight line-clamp-1">{agent.name}</h3>
+                      {agent.trust_level === 'certified' && (
+                        <span className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full bg-[#30d158]/15 text-[#30d158]" title={(agent.certifications ?? []).map((cert) => cert.name).join(', ')} aria-label="인증된 에이전트">✓</span>
+                      )}
+                    </div>
                     <p className="text-[12px] text-white/50 mt-1">v{agent.version}</p>
                   </div>
                 </div>
@@ -112,7 +117,9 @@ export default function MarketplacePage() {
               </div>
               
               <div className="mt-auto pt-4 border-t border-white/5 flex justify-between items-center">
-                <div className="flex -space-x-2">
+                <div className="flex items-center gap-2">
+                  {agent.trust_level === 'certified' && <span className="text-[11px] font-medium text-[#30d158]">인증 {agent.certifications?.length ?? 0}</span>}
+                  <div className="flex -space-x-2">
                   {/* Tool Badges - Dummy visual representation */}
                   {agent.tools.slice(0, 3).map((tool, i) => (
                     <div key={i} className="w-6 h-6 rounded-full bg-apple-surface2 border border-apple-surface1 flex items-center justify-center" title={tool}>
@@ -124,6 +131,7 @@ export default function MarketplacePage() {
                       <span className="text-[8px] text-white/50">+{agent.tools.length - 3}</span>
                     </div>
                   )}
+                  </div>
                 </div>
                 <button className="text-[14px] font-medium text-apple-blue hover:text-white transition-colors bg-apple-blue/10 px-3 py-1.5 rounded-[8px]">
                   상세보기
