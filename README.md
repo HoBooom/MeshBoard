@@ -4,7 +4,7 @@
 
 **Portfolio Release v1.0.0** · 설계 의도, 핵심 시연 흐름과 기술적 판단은 [`docs/portfolio-guide.md`](./docs/portfolio-guide.md)에 정리했습니다.
 
-[![CI](https://github.com/INHAco2/MeshBoard_V2/actions/workflows/ci.yml/badge.svg)](https://github.com/INHAco2/MeshBoard_V2/actions/workflows/ci.yml)
+[![CI](https://github.com/HoBooom/MeshBoard/actions/workflows/ci.yml/badge.svg)](https://github.com/HoBooom/MeshBoard/actions/workflows/ci.yml)
 
 ## 프로젝트 범위
 
@@ -74,8 +74,8 @@ FastAPI API ─────────────── PostgreSQL + pgvector 
 > Ollama가 없어도 DB·API·보드·테스트는 모두 동작하며, 에이전트를 실제로 invoke 할 때만 필요합니다.
 
 ```bash
-git clone https://github.com/INHAco2/MeshBoard_V2.git
-cd MeshBoard_V2
+git clone https://github.com/HoBooom/MeshBoard.git
+cd MeshBoard
 cp backend/.env.example backend/.env
 
 # DB, locked dependencies, migration, tests, lint, build
