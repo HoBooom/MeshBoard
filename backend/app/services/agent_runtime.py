@@ -6,7 +6,7 @@ MeshBoard — Agent Runtime
 
 LLM 백엔드
 ──────────
-기본값은 **로컬 Ollama**(`http://localhost:11434/v1`, `qwen2.5:7b`)입니다. 클론한 사람이
+기본값은 **로컬 Ollama**(`http://localhost:11434/v1`, `qwen3:8b`)입니다. 클론한 사람이
 API 키 없이 바로 실행할 수 있고, 유료 호출이 발생하지 않습니다. `LLM_BASE_URL` /
 `LLM_MODEL` 만 바꾸면 vLLM·LM Studio·OpenAI·게이트웨이 등 어떤 OpenAI-호환 백엔드로도
 교체됩니다 (`backend/.env.example` 참고).
@@ -41,6 +41,7 @@ import logging
 import operator
 import re
 import uuid
+from collections import OrderedDict
 from functools import lru_cache
 from typing import Annotated, Any, Dict, List, Optional, TypedDict
 
@@ -67,6 +68,37 @@ AGENT_INVALID_RESPONSE_MESSAGE = "죄송합니다. 해당 AGENT가 정상적인 
 
 _CHECKPOINTER = MemorySaver()
 
+# MemorySaver 는 프로세스 메모리에 체크포인트를 쌓기만 하고 스스로 비우지 않는다.
+# invoke 마다 새 thread_id 가 생기므로 그대로 두면 장시간 구동 시 메모리가 단조 증가한다.
+# 끝난 실행은 즉시 버리고, 재개 가능한(interrupt 된) 실행만 최근 것부터 이만큼 유지한다.
+MAX_RESUMABLE_CHECKPOINTS = 128
+_resumable_threads: "OrderedDict[str, None]" = OrderedDict()
+
+
+def _drop_checkpoint_thread(thread_id: str) -> None:
+    try:
+        _CHECKPOINTER.delete_thread(thread_id)
+    except Exception:  # noqa: BLE001 — 정리 실패가 실행 결과를 망가뜨리면 안 된다.
+        logger.debug("Failed to drop checkpoint thread %s", thread_id, exc_info=True)
+
+
+def _retain_checkpoint_thread(thread_id: str, *, resumable: bool) -> None:
+    """실행이 끝난 뒤 체크포인트를 버릴지 남길지 결정합니다.
+
+    재개할 수 없는 실행의 체크포인트는 쓸모가 없으므로 바로 버린다.
+    재개 가능한 실행은 남기되 총량을 제한해, 아무도 resume 하지 않은 오래된 것부터 정리한다.
+    """
+    if not resumable:
+        _resumable_threads.pop(thread_id, None)
+        _drop_checkpoint_thread(thread_id)
+        return
+
+    _resumable_threads[thread_id] = None
+    _resumable_threads.move_to_end(thread_id)
+    while len(_resumable_threads) > MAX_RESUMABLE_CHECKPOINTS:
+        oldest, _ = _resumable_threads.popitem(last=False)
+        _drop_checkpoint_thread(oldest)
+
 
 class AgentGraphState(TypedDict, total=False):
     """LangGraph 에 저장되는 에이전트 실행 상태."""
@@ -81,6 +113,9 @@ class AgentGraphState(TypedDict, total=False):
     tool_iterations: int
     final_output: str
     error: Optional[str]
+    # 한 invoke 안에서 agent_node 가 여러 번 돌 수 있으므로 토큰은 누적한다.
+    token_input: Annotated[int, operator.add]
+    token_output: Annotated[int, operator.add]
 
 
 def _build_tool_manifest(tool_ids: List[str]) -> str:
@@ -273,6 +308,28 @@ def _create_completion(client: OpenAI, model_name: str, messages: List[Dict[str,
     )
 
 
+def _usage_tokens(completion: Any) -> tuple[int, int]:
+    """completion 의 usage 를 (prompt, completion) 토큰 수로 뽑아냅니다.
+
+    OpenAI·Ollama·vLLM 모두 `usage.prompt_tokens` / `usage.completion_tokens` 를 채워 주지만,
+    일부 OpenAI-호환 서버는 usage 를 아예 생략합니다. 그 경우 0 으로 처리해 집계가 조용히
+    잘못된 값을 만들지 않게 합니다(0 은 "측정되지 않음"으로 읽힌다).
+    """
+    usage = getattr(completion, "usage", None)
+    if usage is None:
+        return 0, 0
+
+    def _as_int(value: Any) -> int:
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return 0
+
+    return _as_int(getattr(usage, "prompt_tokens", 0)), _as_int(
+        getattr(usage, "completion_tokens", 0)
+    )
+
+
 def _transition(source: str, target: str, reason: str) -> Dict[str, Any]:
     return {"from": source, "to": target, "reason": reason}
 
@@ -321,7 +378,10 @@ def _build_agent_graph(
 
         raw_content = (completion.choices[0].message.content or "").strip()
         parsed = _extract_json(raw_content)
+        prompt_tokens, completion_tokens = _usage_tokens(completion)
         updates: Dict[str, Any] = {
+            "token_input": prompt_tokens,
+            "token_output": completion_tokens,
             "messages": [{"role": "assistant", "content": raw_content}],
             "steps": [
                 {
@@ -483,6 +543,8 @@ async def invoke_agent(
             "tool_iterations": 0,
             "final_output": "",
             "error": None,
+            "token_input": 0,
+            "token_output": 0,
         }
 
     # graph.invoke 와 그 내부의 OpenAI sync client 호출은 블로킹이다. 이를 event loop 에서
@@ -517,9 +579,14 @@ async def invoke_agent(
         runtime_control.end(agent.agent_id)
     snapshot = graph.get_state(config)
     checkpoint_config = snapshot.config.get("configurable", {})
+    _retain_checkpoint_thread(thread_id, resumable=bool(snapshot.next))
 
     return {
         "model_used": model_name,
+        "usage": {
+            "input_tokens": int(state.get("token_input", 0) or 0),
+            "output_tokens": int(state.get("token_output", 0) or 0),
+        },
         "output": state.get("final_output", ""),
         "tool_calls": state.get("tool_calls", []),
         "steps": state.get("steps", []),

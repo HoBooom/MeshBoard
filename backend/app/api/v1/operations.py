@@ -274,7 +274,10 @@ async def operations_analytics(
                 func.coalesce(func.sum(Interaction.token_output), 0),
                 func.coalesce(func.avg(Interaction.duration_ms), 0),
             )
-            .where(Interaction.model_used.is_not(None))
+            # handoff 행 하나가 "에이전트 1회 호출"이다. 같은 실행의 reasoning/tool_result step 도
+            # model_used 를 갖지만, 그 행들까지 세면 실행 수가 부풀고 duration 평균이 왜곡된다
+            # (step 에는 duration_ms 가 없다). 토큰과 소요시간도 handoff 에 기록되므로 여기로 한정한다.
+            .where(Interaction.model_used.is_not(None), Interaction.kind == "handoff")
             .group_by(Interaction.model_used)
             .order_by(func.count(Interaction.interaction_id).desc())
         )

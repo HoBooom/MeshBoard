@@ -68,6 +68,6 @@ CityLearn and CHESCA are demonstration runtimes behind service interfaces. They 
 - Text JSON tool protocol for the current LLM gateway
 - Request-scoped broker execution rather than a durable worker queue
 - Poll/refetch UI updates rather than SSE/WebSocket
-- Mock OIDC provider rather than a configured enterprise IdP
+- No enterprise IdP (OIDC) integration; authentication is the built-in JWT/RBAC only
 - Pause/Kill is cooperative at the API wait boundary; an already-running synchronous provider request may finish in its worker thread and its result is discarded
 - Analytics use request-time aggregation rather than a materialized view

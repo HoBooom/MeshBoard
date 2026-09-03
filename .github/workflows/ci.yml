@@ -11,6 +11,22 @@ permissions:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_DB: meshboard
+          POSTGRES_USER: meshboard
+          POSTGRES_PASSWORD: dev_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U meshboard"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://meshboard:dev_password@localhost:5432/meshboard
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -22,7 +38,12 @@ jobs:
       - name: Install locked dependencies
         working-directory: backend
         run: uv sync --locked
+      - name: Apply database migrations
+        working-directory: backend
+        run: uv run alembic upgrade head
       - name: Run backend tests
+        # 통합 테스트는 위 postgres 서비스에 붙는다. DB 가 없으면 스스로 skip 하므로
+        # 로컬에서 DB 없이 돌려도 이 명령은 그대로 통과한다.
         working-directory: backend
         run: uv run python -m unittest discover -s tests -v
 

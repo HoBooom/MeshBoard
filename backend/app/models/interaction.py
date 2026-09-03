@@ -17,7 +17,8 @@ class Interaction(Base):
     __tablename__ = "interactions"
 
     interaction_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    conversation_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("conversations.conversation_id", ondelete="CASCADE"), nullable=False)
+    # 워크스페이스 대화 밖에서 일어나는 실행(에이전트 직접 호출)도 기록하므로 비어 있을 수 있다.
+    conversation_id: Mapped[Optional[uuid.UUID]] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("conversations.conversation_id", ondelete="CASCADE"), nullable=True)
     schema_ver: Mapped[str] = mapped_column(String(10), nullable=False, default="1.0")
     
     parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("interactions.interaction_id"))
@@ -74,7 +75,7 @@ class InteractionArchive(Base):
 
     # Copy of interactions fields
     interaction_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True)
-    conversation_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    conversation_id: Mapped[Optional[uuid.UUID]] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
     schema_ver: Mapped[str] = mapped_column(String(10), nullable=False, default="1.0")
     
     parent_id: Mapped[Optional[uuid.UUID]] = mapped_column(PG_UUID(as_uuid=True))

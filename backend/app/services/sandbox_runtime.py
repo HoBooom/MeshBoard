@@ -6,8 +6,13 @@ import re
 from collections import deque
 from typing import Any, Iterable
 
+from app.services.subscription_rules import (
+    SubscriptionEvent,
+    SubscriptionRule,
+    evaluate_subscription,
+)
 
-PRIORITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
 MENTION_RE = re.compile(r"(?<!\S)@([^\s@]+)")
 
 
@@ -16,32 +21,16 @@ def _key(value: str) -> str:
 
 
 def _rule_matches(event: dict[str, Any], rule: dict[str, Any] | None) -> tuple[bool, str]:
-    if not rule or not rule.get("is_active", True):
-        return False, "subscription rule is inactive"
+    """구독 규칙 평가를 브로커와 공유되는 단일 구현에 위임합니다.
 
-    event_tags = set(event.get("tags") or [])
-    ignored_tags = set(rule.get("ignore_tags") or [])
-    if event_tags.intersection(ignored_tags):
-        return False, "event contains an ignored tag"
-
-    minimum = PRIORITY_ORDER.get(str(rule.get("min_priority") or "medium"), 1)
-    actual = PRIORITY_ORDER.get(str(event.get("priority") or "medium"), 1)
-    if actual < minimum:
-        return False, "event priority is below the subscription threshold"
-
-    filters = (
-        ("domain", "watch_domains"),
-        ("intent", "watch_intents"),
+    Sandbox 에는 워크스페이스 edge 가 없어 규칙 자체가 구독이므로, 규칙이 없으면 매칭되지 않는다.
+    """
+    decision = evaluate_subscription(
+        SubscriptionEvent.from_mapping(event),
+        SubscriptionRule.from_mapping(rule) if rule else None,
+        missing_rule_matches=False,
     )
-    for event_key, rule_key in filters:
-        watched = set(rule.get(rule_key) or [])
-        if watched and event.get(event_key) not in watched:
-            return False, f"{event_key} does not match the subscription"
-
-    watched_tags = set(rule.get("watch_tags") or [])
-    if watched_tags and not event_tags.intersection(watched_tags):
-        return False, "event tags do not match the subscription"
-    return True, "matched active subscription rule"
+    return decision.matched, decision.reason
 
 
 def simulate_sandbox_event(

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import unittest
 import unittest.mock
+from pathlib import Path
 
 from app.core.config import Settings
 from app.services import agent_runtime
@@ -24,9 +25,23 @@ class LocalFirstDefaultsTests(unittest.TestCase):
 
         self.assertFalse(settings.llm_uses_external_gateway)
         self.assertEqual(settings.llm_base_url, "http://localhost:11434/v1")
-        self.assertEqual(settings.llm_default_model, "qwen2.5:7b")
+        self.assertEqual(settings.llm_default_model, "qwen3:8b")
         # 로컬 서버는 키를 검사하지 않지만 SDK가 빈 문자열을 거부하므로 placeholder가 있어야 한다.
         self.assertTrue(settings.llm_api_key)
+
+    def test_env_example_matches_the_code_defaults(self) -> None:
+        """문서가 안내하는 값과 코드 기본값이 어긋나면, 클론한 사람이 받으라고 안내받은
+
+        모델과 실제로 호출되는 모델이 달라진다.
+        """
+        example = (
+            Path(__file__).resolve().parents[2] / ".env.example"
+        ).read_text()
+        settings = _settings()
+
+        self.assertIn(f"LLM_MODEL={settings.LLM_MODEL}", example)
+        self.assertIn(f"LLM_BASE_URL={settings.LLM_BASE_URL}", example)
+        self.assertIn(f"ollama pull {settings.LLM_MODEL}", example)
 
     def test_default_base_url_is_loopback_so_no_paid_call_can_leave_the_machine(self) -> None:
         settings = _settings()

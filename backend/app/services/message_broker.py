@@ -8,18 +8,20 @@ MeshBoard — Agent-Mesh Message Broker
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import re
 import time
 import uuid
+from functools import lru_cache
 from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.agent import Agent
+from app.models.agent import Agent, AgentSubscriptionRule
 from app.core.config import settings
 from app.models.message import Message, MessageHeader, MessageReceipt
 from app.models.workspace import WorkspaceAgent, WorkspaceEdge, WorkspaceNode
@@ -31,6 +33,11 @@ from app.services.agent_runtime import AGENT_INVALID_RESPONSE_MESSAGE, invoke_ag
 from app.services.policy_enforcement import resolve_agent_policy
 from app.services.security_events import emit_security_event
 from app.services.schema_compat import CURRENT_INTERACTION_SCHEMA
+from app.services.subscription_rules import (
+    SubscriptionEvent,
+    SubscriptionRule,
+    evaluate_subscription,
+)
 from sqlalchemy_utils import Ltree
 
 
@@ -48,12 +55,83 @@ async def _invoke_routed_agent(
     """Bound broker fan-out so one message cannot exhaust LLM connections."""
     async with semaphore:
         kwargs = {"agent": agent, "user_message": user_message}
-        if agent_invoker is invoke_agent and allowed_tool_ids_override is not None:
+        # 도구 allow-list 축소는 정책 결과이므로 invoker 가 받아줄 수 있으면 항상 전달한다.
+        # (invoker 의 정체가 아니라 시그니처로 판단해야 정책 강제가 테스트 대역에서도 유지된다.)
+        if allowed_tool_ids_override is not None and _accepts_tool_override(agent_invoker):
             kwargs["allowed_tool_ids_override"] = allowed_tool_ids_override
         return await asyncio.wait_for(
             agent_invoker(**kwargs),
             timeout=settings.AGENT_INVOKE_TIMEOUT_SECONDS,
         )
+
+
+@lru_cache(maxsize=8)
+def _accepts_tool_override(invoker) -> bool:
+    """invoker 가 allowed_tool_ids_override 인자를 받는지 확인합니다."""
+    try:
+        return "allowed_tool_ids_override" in inspect.signature(invoker).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _usage_from_result(result: dict) -> tuple[int, int]:
+    """invoke 결과의 usage 를 (input, output) 토큰으로 정규화합니다.
+
+    usage 를 돌려주지 않는 OpenAI-호환 서버나 테스트용 invoker 도 있으므로, 없으면 0 을 쓴다.
+    0 은 "이 실행에서 토큰을 측정하지 못했다"는 뜻이며 합계를 왜곡하지 않는다.
+    """
+    usage = result.get("usage") or {}
+    if not isinstance(usage, dict):
+        return 0, 0
+
+    def _as_int(value) -> int:
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return 0
+
+    return _as_int(usage.get("input_tokens")), _as_int(usage.get("output_tokens"))
+
+
+async def _filter_by_subscription_rules(
+    db: AsyncSession, header: MessageHeader, agent_ids: list
+) -> list:
+    """edge 로 매칭된 에이전트를 각자의 구독 규칙으로 한 번 더 거릅니다.
+
+    Sandbox 시뮬레이터와 같은 평가 함수를 쓰므로 두 경로의 판정이 어긋나지 않는다.
+    """
+    if not agent_ids:
+        return []
+
+    rules = {
+        rule.agent_id: SubscriptionRule.from_model(rule)
+        for rule in (
+            await db.execute(
+                select(AgentSubscriptionRule).where(
+                    AgentSubscriptionRule.agent_id.in_(agent_ids)
+                )
+            )
+        ).scalars().all()
+    }
+    event = SubscriptionEvent(
+        domain=header.domain,
+        intent=header.intent,
+        priority=header.priority,
+        tags=tuple(header.tags or ()),
+        sender_id=str(header.sender_id) if header.sender_id else None,
+    )
+    kept = []
+    for agent_id in agent_ids:
+        decision = evaluate_subscription(
+            event, rules.get(agent_id), missing_rule_matches=True
+        )
+        if decision.matched:
+            kept.append(agent_id)
+        else:
+            logger.debug(
+                "Subscription rule filtered agent %s: %s", agent_id, decision.reason
+            )
+    return kept
 
 
 def build_inline_body_ref(payload: dict) -> str:
@@ -397,11 +475,14 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
                     WorkspaceNode.status != "error",
                 )
             )
-            matched_agent_ids = [
+            edge_matched = [
                 agent_id
                 for agent_id in dict.fromkeys(result.scalars().all())
                 if agent_id in workspace_agent_id_set
             ]
+            # edge 는 "누구의 말을 듣는가", 구독 규칙은 "그중 무엇에 반응하는가"이다.
+            # 규칙이 없는 에이전트는 edge 만으로 수신한다(기존 동작 유지).
+            matched_agent_ids = await _filter_by_subscription_rules(db, header, edge_matched)
 
     now = datetime.now(timezone.utc)
     root_id = uuid.uuid4()
@@ -495,12 +576,10 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
             if agent is None or agent_node is None:
                 continue
 
-            policy_decision = (
-                await resolve_agent_policy(db, agent, user_message)
-                if agent_invoker is invoke_agent
-                else None
-            )
-            if policy_decision is not None and not policy_decision.allowed:
+            # 정책은 어떤 invoker 를 쓰든 항상 강제한다. 실행 경계에서의 차단이 목적이므로
+            # 호출 대상이 무엇인지에 따라 검사를 건너뛰면 안 된다.
+            policy_decision = await resolve_agent_policy(db, agent, user_message)
+            if not policy_decision.allowed:
                 await emit_security_event(
                     "agent.policy_blocked",
                     severity="high",
@@ -526,8 +605,8 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
                 agent_node.status = "active"
                 agent_node.updated_at = datetime.now(timezone.utc)
                 continue
-            effective_message = policy_decision.message if policy_decision else user_message
-            effective_tools = policy_decision.effective_tool_ids if policy_decision else None
+            effective_message = policy_decision.message
+            effective_tools = policy_decision.effective_tool_ids
             agent_node.status = "processing"
             agent_node.updated_at = datetime.now(timezone.utc)
             handoff = handoff_by_agent[agent.agent_id]
@@ -535,6 +614,13 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
             invocation_targets.append(
                 (agent, agent_node, effective_message, effective_tools, time.perf_counter())
             )
+        # 아래 gather 로 동시에 실행되는 호출들을 하나의 parallel group 으로 묶는다.
+        # 운영 분석은 이 그룹의 wall-clock 과 개별 duration 합을 비교해 실제 절약 시간을 낸다.
+        # 대상이 1건이면 병렬 실행이 아니므로 그룹을 만들지 않는다(빈 그룹으로 통계를 흐리지 않기 위함).
+        parallel_group_id = uuid.uuid4() if len(invocation_targets) > 1 else None
+        if parallel_group_id is not None:
+            for target_agent, *_ in invocation_targets:
+                handoff_by_agent[target_agent.agent_id].parallel_group_id = parallel_group_id
         await db.flush()
 
         semaphore = asyncio.Semaphore(settings.AGENT_INVOKE_MAX_CONCURRENCY)
@@ -558,6 +644,12 @@ async def route_workspace_message(db: AsyncSession, header: MessageHeader, *, ag
                 agent_node.status = "active"
                 handoff.state = "COMPLETED"
                 handoff.results = answer[:4000]
+                # handoff 는 "에이전트 1회 호출"에 해당하므로 모델과 토큰 사용량을 여기에 기록한다.
+                # 운영 분석의 모델별 집계가 이 행을 읽는다.
+                handoff.model_used = result.get("model_used")
+                token_input, token_output = _usage_from_result(result)
+                handoff.token_input = token_input
+                handoff.token_output = token_output
                 for index, step in enumerate(result.get("steps") or [], start=1):
                     node = step.get("node")
                     if node not in {"agent_node", "mcp_tool_node"}:

@@ -34,6 +34,7 @@ from app.schemas.agent import (
     ToolDescriptor,
 )
 from app.services.agent_runtime import invoke_agent
+from app.services.execution_trace import record_direct_invocation
 from app.services.tool_catalog import TOOL_REGISTRY, list_tool_descriptors
 from app.services.policy_enforcement import resolve_agent_policy
 from app.services.runtime_control import AgentExecutionCancelled
@@ -371,8 +372,21 @@ async def invoke(
             detail=f"status={agent.status} 에이전트는 실행할 수 없습니다.",
         )
 
+    started_at = datetime.now(timezone.utc)
     policy_decision = await resolve_agent_policy(db, agent, payload.message)
     if not policy_decision.allowed:
+        await record_direct_invocation(
+            db,
+            actor_id=current_user.user_id,
+            actor_name=current_user.name,
+            agent=agent,
+            prompt=payload.message,
+            started_at=started_at,
+            state="CANCELLED",
+            error_code="POLICY_BLOCKED",
+            error_message="; ".join(policy_decision.violations),
+        )
+        await db.commit()
         await emit_security_event(
             "agent.policy_blocked",
             severity="high",
@@ -401,6 +415,18 @@ async def invoke(
             allowed_tool_ids_override=policy_decision.effective_tool_ids,
         )
     except AgentExecutionCancelled as exc:
+        await record_direct_invocation(
+            db,
+            actor_id=current_user.user_id,
+            actor_name=current_user.name,
+            agent=agent,
+            prompt=payload.message,
+            started_at=started_at,
+            state="CANCELLED",
+            error_code="AgentExecutionCancelled",
+            error_message=str(exc),
+        )
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
@@ -416,10 +442,26 @@ async def invoke(
             detail="에이전트 실행 서비스를 사용할 수 없습니다. 서버 설정을 확인하세요.",
         ) from exc
 
+    execution_tree_id = await record_direct_invocation(
+        db,
+        actor_id=current_user.user_id,
+        actor_name=current_user.name,
+        agent=agent,
+        prompt=payload.message,
+        started_at=started_at,
+        result=result,
+        state="FAILED" if result.get("error") else "COMPLETED",
+        error_code="RUNTIME_ERROR" if result.get("error") else None,
+        error_message=str(result["error"]) if result.get("error") else None,
+    )
+    await db.commit()
+
     return InvokeResponse(
         agent_id=agent.agent_id,
         agent_name=agent.name,
+        execution_tree_id=execution_tree_id,
         model_used=result["model_used"],
+        usage=result.get("usage") or {},
         input=payload.message,
         output=result["output"],
         tool_calls=result["tool_calls"],

@@ -26,9 +26,9 @@ fi
 echo "==> Working directory: $PWD"
 
 # ── Local LLM (optional) ────────────────────────────────────────────────────
-# 에이전트 실행은 기본적으로 로컬 Ollama(qwen2.5:7b)를 사용한다. 없어도 DB/API/테스트/보드는
+# 에이전트 실행은 기본적으로 로컬 Ollama(qwen3:8b)를 사용한다. 없어도 DB/API/테스트/보드는
 # 전부 동작하며, 에이전트를 실제로 invoke 할 때만 필요하다. 그래서 경고만 하고 진행한다.
-LLM_MODEL_NAME="${LLM_MODEL:-qwen2.5:7b}"
+LLM_MODEL_NAME="${LLM_MODEL:-qwen3:8b}"
 if command -v ollama >/dev/null 2>&1; then
   if ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$LLM_MODEL_NAME"; then
     echo "==> [0/4] Local LLM ready: $LLM_MODEL_NAME"

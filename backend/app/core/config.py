@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     # 다른 백엔드로 갈아끼우려면 아래 세 값만 바꾸면 된다 (vLLM / LM Studio / OpenAI / 게이트웨이 등).
     LLM_BASE_URL: str = "http://localhost:11434/v1"
     LLM_API_KEY: str = "ollama"  # 로컬 서버는 키를 무시한다. SDK가 빈 값을 거부하므로 placeholder.
-    LLM_MODEL: str = "qwen2.5:7b"
+    LLM_MODEL: str = "qwen3:8b"
     LLM_TIMEOUT_SECONDS: float = 120.0
     LLM_MAX_OUTPUT_TOKENS: int = 4096
     # 모델명을 그대로 전달할지 여부. Ollama는 "qwen2.5:7b" 처럼 provider 접두가 없고,

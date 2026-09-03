@@ -15,7 +15,7 @@ MeshBoard는 단일 챗봇이 아니라 여러 에이전트가 함께 일하는 
 - JWT/RBAC 기반 사용자·역할 관리
 - 에이전트 메타데이터, 도구 allow-list, 구독 규칙 관리
 - 워크스페이스 생성, 참여 요청, 에이전트 다중 배치
-- `@mention` 및 subscription edge 기반 메시지 라우팅
+- `@mention`, subscription edge, 구독 규칙(도메인·intent·태그·우선순위) 기반 메시지 라우팅
 - 명시적 agent ID/role 타기팅과 bounded parallel fan-out
 - LangGraph 기반 `agent → tool → agent` 실행과 중단·재개
 - Goal/Sub Goal과 전용 conversation 생성
@@ -23,7 +23,7 @@ MeshBoard는 단일 챗봇이 아니라 여러 에이전트가 함께 일하는 
 - CityLearn 전력 환경의 deterministic/LLM planner 및 CHESCA 시나리오 시각화
 - 운영 데이터와 분리된 시나리오 Sandbox 및 의사결정 로그
 - 정책 템플릿 검증, 실행 전 정책 강제, PII 마스킹, 인증 배지
-- 운영자 Pause/Kill 신호, `ltree` 실행 트리, 모델/병렬 실행 분석
+- 운영자 Pause/Kill 신호, 두 진입점 모두에 남는 `ltree` 실행 트리, 모델별 토큰·병렬 실행 분석
 - 보존 기간 기반 불변 감사 아카이브와 HMAC 서명 보안 웹훅
 - interaction schema v1→v2 하위 호환 어댑터
 
@@ -58,7 +58,7 @@ FastAPI API ─────────────── PostgreSQL + pgvector 
 | Backend | FastAPI, Python 3.11+, SQLAlchemy 2 async |
 | Agent runtime | LangGraph, 로컬 OpenAI-호환 LLM(Ollama/Qwen 기본), MCP-shaped tool catalog |
 | Data | PostgreSQL 15, pgvector, Alembic |
-| Quality | unittest (69), ESLint 10, TypeScript strict mode, GitHub Actions |
+| Quality | unittest (123), ESLint 10, TypeScript strict mode, GitHub Actions |
 | Package management | uv lockfile, npm lockfile |
 
 ## 빠른 시작
@@ -68,7 +68,7 @@ FastAPI API ─────────────── PostgreSQL + pgvector 
 - Docker Desktop
 - Python 3.11 이상과 [uv](https://docs.astral.sh/uv/)
 - Node.js 22.13 이상 (`.nvmrc` 제공 — `nvm use`)
-- [Ollama](https://ollama.com/download) + `ollama pull qwen2.5:7b` — 에이전트 실행용 **로컬** 모델
+- [Ollama](https://ollama.com/download) + `ollama pull qwen3:8b` — 에이전트 실행용 **로컬** 모델
 
 > 에이전트 실행은 기본적으로 로컬 모델만 사용합니다. **API 키가 필요 없고 유료 호출도 발생하지 않습니다.**
 > Ollama가 없어도 DB·API·보드·테스트는 모두 동작하며, 에이전트를 실제로 invoke 할 때만 필요합니다.
@@ -101,7 +101,7 @@ SKIP_DB=1 SKIP_INSTALL=1 ./init.sh
 
 ```bash
 docker compose up -d --wait
-ollama pull qwen2.5:7b     # 에이전트 실행용 로컬 모델 (최초 1회)
+ollama pull qwen3:8b       # 에이전트 실행용 로컬 모델 (최초 1회)
 
 cd backend
 uv sync --locked
@@ -148,11 +148,26 @@ npm run build
 npm audit --audit-level=high
 ```
 
-GitHub Actions에서도 DB가 필요 없는 backend 69개 테스트와 frontend lint/build를 같은 방식으로 실행합니다.
+backend 테스트 **123개**는 두 층으로 나뉩니다.
 
-현재 테스트 범위는 서비스 계층 단위 테스트와 스키마 계약입니다. **DB에 실제로 연결하는 통합 테스트와
-브로커 라우팅·RBAC 강제에 대한 엔드투엔드 테스트는 아직 없습니다.** Alembic `015_member_role` head,
-Sandbox 무오염 제약, 불변 archive trigger는 수동으로 확인했으며 자동 검증으로는 전환하지 못했습니다.
+| 층 | 개수 | 대상 |
+|---|---:|---|
+| 단위·계약 | 82 | 정책 평가, 구독 규칙, 도구 경계, LLM 백엔드 설정, 스키마 |
+| 통합 (PostgreSQL) | 41 | 브로커 라우팅, ltree 실행 트리, 토큰·병렬 집계, JWT/RBAC 강제, 발신자 위조 차단 |
+
+통합 테스트는 실제 PostgreSQL에 붙습니다(ltree·JSONB·ARRAY를 쓰므로 대체 불가). 각 테스트는
+트랜잭션 안에서 실행되고 롤백되므로 DB에 흔적이 남지 않으며, DB가 없으면 **조용히 skip**되어
+`docker compose up -d` 없이도 위 명령이 그대로 통과합니다. GitHub Actions는 postgres 서비스를
+띄워 통합 테스트까지 전부 실행합니다.
+
+로컬 스택이 실제로 동작하는지 한 번에 보고 싶다면:
+
+```bash
+uv run --project backend python backend/scripts/verify_local_stack.py
+```
+
+로컬 LLM 연결 → LangGraph 도구 실행 → 브로커 라우팅 → 실행 트리 → 토큰·병렬 집계를 순서대로
+실행하고 결과를 출력합니다(DB 변경은 롤백).
 
 ## 성능 평가와 재현
 
@@ -219,7 +234,7 @@ Final_mesh1-main/      CHESCA experiment runtime + 집계 결과(요약 CSV)
 - 활성 정책은 실행 전에 차단어·입력 길이·필수 인증·도구 범위를 강제하며 선택적으로 PII를 마스킹합니다.
 - 보안 정책 위반 이벤트는 설정 시 HMAC-SHA256 서명 웹훅으로 전달됩니다.
 - 아카이브 레코드는 PostgreSQL trigger가 UPDATE/DELETE를 거부합니다.
-- 현재 OIDC 구현은 provider boundary와 mock 검증용입니다. 실제 기업 IdP 연동 완료로 간주하지 않습니다.
+- 인증은 자체 JWT/RBAC 만 제공합니다. 기업 IdP(OIDC) 연동은 구현 범위에 포함하지 않았습니다.
 - 현재 message broker는 bounded parallel execution이지만 독립 작업 큐는 아닙니다.
 
 ## 라이선스

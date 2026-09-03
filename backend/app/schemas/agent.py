@@ -154,7 +154,10 @@ class InvokeResponse(BaseModel):
 
     agent_id: UUID
     agent_name: str
+    # 이 실행의 ltree 실행 트리 식별자. /operations/executions/{id} 로 조회할 수 있다.
+    execution_tree_id: UUID
     model_used: str
+    usage: Dict[str, int] = Field(default_factory=dict)
     input: str
     output: str
     tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
