@@ -25,25 +25,33 @@ fi
 
 echo "==> Working directory: $PWD"
 
+if [ ! -f backend/.env ]; then
+  cp backend/.env.example backend/.env
+  echo "==> Created backend/.env from .env.example (로컬 모델 기본, API 키 불필요)"
+fi
+
 # ── Local LLM (optional) ────────────────────────────────────────────────────
-# 에이전트 실행은 기본적으로 로컬 Ollama(qwen3:8b)를 사용한다. 없어도 DB/API/테스트/보드는
-# 전부 동작하며, 에이전트를 실제로 invoke 할 때만 필요하다. 그래서 경고만 하고 진행한다.
+# 에이전트 실행은 기본적으로 로컬 Ollama(qwen3:8b)를 사용한다. 없어도 DB/API/테스트는 전부
+# 동작하고 통합 테스트는 대역을 쓰므로, 여기서는 준비 여부만 판별하고 진행한다.
 LLM_MODEL_NAME="${LLM_MODEL:-qwen3:8b}"
-if command -v ollama >/dev/null 2>&1; then
-  if ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$LLM_MODEL_NAME"; then
-    echo "==> [0/4] Local LLM ready: $LLM_MODEL_NAME"
-  elif [ "${PULL_MODEL:-0}" = "1" ]; then
-    echo "==> [0/4] Pulling local model: $LLM_MODEL_NAME"
-    ollama pull "$LLM_MODEL_NAME"
-  else
-    echo "==> [0/4] WARNING: Ollama installed but '$LLM_MODEL_NAME' is missing." >&2
-    echo "           Run 'ollama pull $LLM_MODEL_NAME' or 'PULL_MODEL=1 ./init.sh'." >&2
-    echo "           Agent invocation will fail until then; everything else still works." >&2
-  fi
+LLM_READY=0
+
+if ! command -v ollama >/dev/null 2>&1; then
+  echo "==> [0/5] Local LLM: ollama 미설치 — 에이전트 실행 검증은 건너뜁니다."
+  echo "           https://ollama.com/download 설치 후 'ollama pull $LLM_MODEL_NAME'"
+  echo "           호스팅 백엔드를 쓰려면 backend/.env 의 LLM_BASE_URL/LLM_MODEL 을 바꾸세요."
+elif ! ollama list >/dev/null 2>&1; then
+  echo "==> [0/5] Local LLM: ollama 서버가 응답하지 않습니다 — 'ollama serve' 를 실행하세요."
+elif ollama list | awk 'NR>1 {print $1}' | grep -qx "$LLM_MODEL_NAME"; then
+  echo "==> [0/5] Local LLM ready: $LLM_MODEL_NAME"
+  LLM_READY=1
+elif [ "${PULL_MODEL:-0}" = "1" ]; then
+  echo "==> [0/5] Pulling local model: $LLM_MODEL_NAME"
+  ollama pull "$LLM_MODEL_NAME"
+  LLM_READY=1
 else
-  echo "==> [0/4] WARNING: Ollama not found — agent invocation will be unavailable." >&2
-  echo "           Install from https://ollama.com/download, then 'ollama pull $LLM_MODEL_NAME'." >&2
-  echo "           To use a hosted backend instead, set LLM_BASE_URL/LLM_MODEL in backend/.env." >&2
+  echo "==> [0/5] Local LLM: '$LLM_MODEL_NAME' 모델이 없습니다."
+  echo "           'ollama pull $LLM_MODEL_NAME' 또는 'PULL_MODEL=1 ./init.sh' 로 받으세요."
 fi
 
 if [ "${SKIP_DB:-0}" != "1" ]; then
@@ -54,13 +62,13 @@ if [ "${SKIP_DB:-0}" != "1" ]; then
     exit 1
   fi
 
-  echo "==> [1/4] Starting PostgreSQL"
+  echo "==> [1/5] Starting PostgreSQL"
   docker compose up -d --wait
 else
-  echo "==> [1/4] Skipping PostgreSQL (SKIP_DB=1)"
+  echo "==> [1/5] Skipping PostgreSQL (SKIP_DB=1)"
 fi
 
-echo "==> [2/4] Installing locked dependencies"
+echo "==> [2/5] Installing locked dependencies"
 if [ "${SKIP_INSTALL:-0}" != "1" ]; then
   (cd backend && uv sync --locked)
   (cd frontend && npm ci)
@@ -69,7 +77,7 @@ else
 fi
 
 if [ "${SKIP_DB:-0}" != "1" ]; then
-  echo "==> [3/4] Applying database migrations"
+  echo "==> [3/5] Applying database migrations"
   (cd backend && uv run alembic upgrade head)
 
   if [ "${SEED_DB:-0}" = "1" ]; then
@@ -79,16 +87,32 @@ if [ "${SKIP_DB:-0}" != "1" ]; then
     (cd backend && uv run python ../seed_trust.py)
   fi
 else
-  echo "==> [3/4] Skipping database migrations (SKIP_DB=1)"
+  echo "==> [3/5] Skipping database migrations (SKIP_DB=1)"
 fi
 
 if [ "${SKIP_VERIFY:-0}" != "1" ]; then
-  echo "==> [4/4] Running backend tests and frontend quality gates"
+  # 단위·계약 테스트와 PostgreSQL 통합 테스트가 한 번에 돈다.
+  # DB 가 없으면(SKIP_DB=1) 통합 테스트는 스스로 skip 하므로 이 명령은 그대로 통과한다.
+  echo "==> [4/5] Backend tests"
   (cd backend && uv run python -m unittest discover -s tests -v)
+
+  echo "==> [5/5] Frontend quality gates"
   (cd frontend && npm run lint)
   (cd frontend && npm run build)
+  (cd frontend && npm audit --audit-level=high)
+
+  # 스택이 실제로 붙어서 동작하는지까지 확인한다. DB 변경은 스크립트가 롤백한다.
+  if [ "${SKIP_DB:-0}" != "1" ]; then
+    echo "==> Verifying the running stack end to end"
+    if [ "$LLM_READY" = "1" ]; then
+      uv run --project backend python backend/scripts/verify_local_stack.py
+    else
+      echo "    (로컬 LLM 미준비 — 에이전트 실행 검증은 건너뛰고 DB/브로커 경로만 확인합니다)"
+      uv run --project backend python backend/scripts/verify_local_stack.py --skip-llm
+    fi
+  fi
 else
-  echo "==> [4/4] Verification skipped (SKIP_VERIFY=1)"
+  echo "==> [4/5] Verification skipped (SKIP_VERIFY=1)"
 fi
 
 if [ "${RUN_APP:-0}" = "1" ]; then

@@ -76,32 +76,30 @@ FastAPI API ─────────────── PostgreSQL + pgvector 
 ```bash
 git clone https://github.com/HoBooom/MeshBoard.git
 cd MeshBoard
-cp backend/.env.example backend/.env
-
-# DB, locked dependencies, migration, tests, lint, build
 ./init.sh
-
-# 로컬 모델까지 자동으로 내려받기
-PULL_MODEL=1 ./init.sh
-
-# 데모 데이터까지 준비
-SEED_DB=1 ./init.sh
-
-# 준비 후 backend와 frontend 실행
-SEED_DB=1 RUN_APP=1 ./init.sh
 ```
 
-Docker 없이 코드 품질 게이트만 재현하려면 이미 의존성이 설치된 상태에서 다음을 실행합니다.
+`./init.sh` 하나가 전부를 처리합니다 — `backend/.env` 생성, PostgreSQL 기동, 잠긴 의존성 설치,
+마이그레이션, **backend 테스트 123개**, frontend lint/build/audit, 그리고 스택이 실제로
+붙어서 동작하는지 확인하는 end-to-end 검증까지 순서대로 실행합니다.
 
-```bash
-SKIP_DB=1 SKIP_INSTALL=1 ./init.sh
-```
+| 변형 | 하는 일 |
+|---|---|
+| `PULL_MODEL=1 ./init.sh` | 로컬 모델(`qwen3:8b`)까지 자동으로 내려받습니다 |
+| `SEED_DB=1 ./init.sh` | 데모 계정·공지·정책 시드까지 넣습니다 |
+| `SEED_DB=1 RUN_APP=1 ./init.sh` | 위를 마친 뒤 backend·frontend를 띄웁니다 |
+| `SKIP_DB=1 SKIP_INSTALL=1 ./init.sh` | Docker 없이 코드 품질 게이트만 재현합니다 |
+| `SKIP_VERIFY=1 ./init.sh` | 검증을 건너뛰고 환경만 준비합니다 |
+
+Ollama나 Docker가 없어도 중단되지 않습니다. 쓸 수 없는 검증은 이유를 출력하고 건너뜁니다
+(통합 테스트는 DB가 없으면 스스로 skip합니다).
 
 ### 수동 실행
 
 ```bash
 docker compose up -d --wait
 ollama pull qwen3:8b       # 에이전트 실행용 로컬 모델 (최초 1회)
+cp backend/.env.example backend/.env
 
 cd backend
 uv sync --locked
@@ -139,13 +137,14 @@ npm run dev
 ## 검증
 
 ```bash
-cd backend
-uv run python -m unittest discover -s tests -v
+./init.sh
+```
 
-cd ../frontend
-npm run lint
-npm run build
-npm audit --audit-level=high
+검증은 위 한 줄이면 됩니다. 개별로 돌리려면:
+
+```bash
+cd backend && uv run python -m unittest discover -s tests -v
+cd ../frontend && npm run lint && npm run build && npm audit --audit-level=high
 ```
 
 backend 테스트 **123개**는 두 층으로 나뉩니다.
@@ -160,7 +159,7 @@ backend 테스트 **123개**는 두 층으로 나뉩니다.
 `docker compose up -d` 없이도 위 명령이 그대로 통과합니다. GitHub Actions는 postgres 서비스를
 띄워 통합 테스트까지 전부 실행합니다.
 
-로컬 스택이 실제로 동작하는지 한 번에 보고 싶다면:
+`./init.sh` 는 마지막에 스택 end-to-end 검증도 실행합니다. 따로 돌리려면:
 
 ```bash
 uv run --project backend python backend/scripts/verify_local_stack.py
