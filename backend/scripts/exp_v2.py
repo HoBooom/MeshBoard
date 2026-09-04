@@ -21,6 +21,7 @@ import os
 import sys
 import time
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -47,6 +48,7 @@ from sqlalchemy import select  # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 from app.models.agent import Agent  # noqa: E402
+from app.core.config import settings  # noqa: E402
 from app.services.citylearn_macro_mesh import run_macro_mesh_negotiation  # noqa: E402
 
 OUT = PROJECT / "docs"
@@ -188,9 +190,9 @@ async def run_rollout(env, mode: str, db, agents, n_steps: int,
     return out
 
 
-def save(results):
+def save(results, path: Path = None):
     OUT.mkdir(exist_ok=True)
-    CKPT.write_text(json.dumps(results, indent=2, ensure_ascii=False))
+    (path or CKPT).write_text(json.dumps(results, indent=2, ensure_ascii=False))
 
 
 async def main():
@@ -202,8 +204,13 @@ async def main():
     ap.add_argument("--shock-mult", type=float, default=2.0)
     ap.add_argument("--modes", default="noctrl,sarbc,macro_v1,macro_v2")
     ap.add_argument("--exps", default="normal,disturbance,building_add")
+    ap.add_argument("--ckpt", default=str(CKPT),
+                    help="결과 파일 경로. 기본값은 문서가 인용하는 체크포인트다.")
+    ap.add_argument("--force", action="store_true",
+                    help="기존 결과와 실험 조건이 다를 때도 같은 파일에 이어 쓴다.")
     args = ap.parse_args()
 
+    ckpt_path = Path(args.ckpt)
     H = args.horizon
     eng = create_async_engine(os.environ["DATABASE_URL"])
     Session = async_sessionmaker(eng, expire_on_commit=False)
@@ -214,13 +221,39 @@ async def main():
         }
 
         results: Dict[str, Any] = {}
-        if CKPT.exists():
+        if ckpt_path.exists():
             try:
-                results = json.loads(CKPT.read_text())
+                results = json.loads(ckpt_path.read_text())
             except Exception:  # noqa: BLE001
                 results = {}
-        results.setdefault("config", {"start": args.start, "horizon": H, "initial_soc": args.soc,
-                                      "dummies": args.dummies, "shock_mult": args.shock_mult, "workspace_id": str(WS)})
+
+        # 실험 조건은 재현에 필요한 정보이므로 매번 새로 기록한다. 예전에는 setdefault 라서
+        # horizon 을 바꿔 재실행하면 결과만 덮이고 config 는 옛 값으로 남아, 파일이 조용히
+        # 어긋난 상태가 됐다.
+        config = {
+            "start": args.start,
+            "horizon": H,
+            "initial_soc": args.soc,
+            "dummies": args.dummies,
+            "shock_mult": args.shock_mult,
+            "workspace_id": str(WS),
+            # 어떤 모델로 낸 수치인지 남기지 않으면 나중에 표를 해석할 수 없다.
+            "llm_model": settings.llm_default_model,
+            "llm_base_url": settings.llm_base_url,
+            "llm_external_gateway": settings.llm_uses_external_gateway,
+            "started_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        comparable = ("start", "horizon", "initial_soc", "dummies", "shock_mult", "llm_model")
+        previous = results.get("config")
+        if previous:
+            drift = {k: (previous.get(k), config[k]) for k in comparable if previous.get(k) != config[k]}
+            if drift and not args.force:
+                print(f"ERROR: {ckpt_path} 의 기존 결과와 실험 조건이 다릅니다.", file=sys.stderr)
+                for key, (was, now) in drift.items():
+                    print(f"  {key}: {was!r} → {now!r}", file=sys.stderr)
+                print("  다른 파일에 쓰려면 --ckpt, 이어 쓰려면 --force 를 사용하세요.", file=sys.stderr)
+                return 1
+        results["config"] = {**(previous or {}), **config}
         results.setdefault("experiments", {})
 
         # 외생 shock 크기 = 정상 district load 추정 × shock_mult (start 시점 기준)
@@ -260,9 +293,9 @@ async def main():
                 except Exception as exc:  # noqa: BLE001
                     import traceback; traceback.print_exc()
                     results["experiments"][exp][mode] = {"error": f"{type(exc).__name__}: {exc}"}
-                save(results)
-        save(results)
-    print("\nDONE", CKPT)
+                save(results, ckpt_path)
+        save(results, ckpt_path)
+    print("\nDONE", ckpt_path)
 
 
 if __name__ == "__main__":
