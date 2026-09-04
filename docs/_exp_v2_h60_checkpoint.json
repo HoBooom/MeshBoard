@@ -11,7 +11,8 @@
     "llm_external_gateway": false,
     "started_at": "2026-09-04T02:10:06+00:00",
     "normal_load_est": 18.37,
-    "shock_kwh": 36.73
+    "shock_kwh": 36.73,
+    "note": "noctrl/sarbc 베이스라인만. macro 모드는 LLM 타임아웃으로 무효 처리해 제거함."
   },
   "experiments": {
     "normal": {

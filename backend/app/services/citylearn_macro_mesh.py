@@ -143,7 +143,13 @@ class CoProposerClient:
                 if proposal is not None:
                     self.stats["llm"] += 1
                     return proposal
+                # 응답이 프로토콜을 벗어나 파싱에 실패한 경우. 예외가 아니므로 그동안
+                # 아무 흔적 없이 휴리스틱으로 대체됐다. 타임아웃과 구분해 남긴다.
                 self.stats["fallback"] += 1
+                logger.warning(
+                    "CoProposer returned an unusable response for %s (falling back)",
+                    asset.building_id,
+                )
             except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
                 # 예외 타입을 남기지 않으면 TimeoutError(메시지가 빈 문자열)와 다른 실패를
                 # 구분할 수 없어, LLM 이 통째로 폴백된 실행을 정상 실행으로 오인하게 된다.

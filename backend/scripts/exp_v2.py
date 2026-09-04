@@ -140,6 +140,11 @@ async def run_rollout(env, mode: str, db, agents, n_steps: int,
         elif mode == "macro_v2":
             acts, diag = await v2ctl.decide(snap, prev_district)
             actions = eh.plan_to_actions(env, acts)
+            # v2 는 자체 컨트롤러를 쓰므로 proposer 통계를 여기서 따로 읽는다.
+            # 이걸 빼먹으면 v2 결과만 llm_ratio 없이 남아 v1 과 나란히 비교할 수 없다.
+            v2_stats = getattr(v2ctl.proposer, "stats", None) or {}
+            llm_used = v2_stats.get("llm", 0)
+            llm_fallback = v2_stats.get("fallback", 0)
         else:
             raise ValueError(mode)
 
