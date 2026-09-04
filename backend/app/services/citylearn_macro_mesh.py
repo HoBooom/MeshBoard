@@ -437,6 +437,16 @@ class Negotiator:
         self.proposer = proposer
         self.aggregator = MeanFieldAggregator()
         self.detector = ConflictDetector()
+        # 백엔드가 감당할 수 있는 만큼만 동시에 보낸다. 상한을 넘겨 던지면 초과분이
+        # 큐에서 대기하다 타임아웃되고, 취소돼도 백엔드는 그 요청을 계속 처리해
+        # 다음 라운드까지 밀리는 연쇄가 생긴다.
+        self._slots = asyncio.Semaphore(
+            max(1, int(settings.MESH_BUILDING_INVOKE_MAX_CONCURRENCY))
+        )
+
+    async def _propose_bounded(self, **kwargs) -> BuildingProposal:
+        async with self._slots:
+            return await self.proposer.propose(**kwargs)
 
     async def run(
         self,
@@ -454,9 +464,9 @@ class Negotiator:
         for round_index in range(min(max_rounds, ROUND_INDEX_MAX + 1)):
             t0 = time.time()
 
-            # 병렬 invoke (사용자 요청: asyncio.gather)
+            # 병렬 invoke. 동시 실행 수는 세마포어로 제한한다.
             tasks = [
-                self.proposer.propose(
+                self._propose_bounded(
                     asset=a,
                     round_index=round_index,
                     mean_field=mean_field,

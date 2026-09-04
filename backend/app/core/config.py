@@ -153,6 +153,13 @@ class Settings(BaseSettings):
     # 처리하지만 로컬 8B 모델은 계산 포화 상태라 사실상 순차 처리에 가깝다(실측: 호출당 ~2.6초,
     # 17개에 ~45초). 기본값을 그 실측에 맞춰 잡는다. 빠른 백엔드를 쓰면 낮춰도 된다.
     MESH_BUILDING_INVOKE_TIMEOUT_SECONDS: float = 180.0
+    # 한 라운드에서 동시에 날리는 건물 LLM 호출 수의 상한.
+    # 백엔드가 실제로 동시에 처리할 수 있는 수보다 많이 던지면 초과분은 큐에서 대기하다
+    # 타임아웃되는데, 타임아웃은 코루틴만 취소할 뿐 이미 전송된 HTTP 요청은 백엔드에서
+    # 계속 돌아 다음 라운드의 슬롯까지 잡아먹는다. 그렇게 한 번 밀리면 연쇄로 무너진다
+    # (실측: 17개를 한꺼번에 던진 실행에서 한 스텝이 6,763초까지 늘어남).
+    # 로컬 Ollama 기본 병렬 슬롯(4)에 맞춰 흘려보낸다.
+    MESH_BUILDING_INVOKE_MAX_CONCURRENCY: int = 4
 
     # ── External MCP/Tool Configuration ───────────────────────
     # JSON array. Example:

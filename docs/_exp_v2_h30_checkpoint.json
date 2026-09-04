@@ -5,11 +5,11 @@
     "initial_soc": 0.5,
     "dummies": 2,
     "shock_mult": 2.0,
-    "workspace_id": "913b552a-635c-4560-8f83-5214bbca4b8d",
+    "workspace_id": "1dfdba6d-098f-45ab-9c9d-1d3748da39ea",
     "llm_model": "qwen3:8b",
     "llm_base_url": "http://localhost:11434/v1",
     "llm_external_gateway": false,
-    "started_at": "2026-09-04T04:07:04+00:00",
+    "started_at": "2026-09-04T08:18:31+00:00",
     "normal_load_est": 18.37,
     "shock_kwh": 36.73
   },
@@ -248,6 +248,128 @@
         },
         "final_strategy_note": "최근 reward 추세와 시스템 안정성에 따라 전략을 약간 더 공격적으로 조정하여 시스템 효율성을 개선합니다.",
         "wall_s": 4540.5
+      }
+    },
+    "disturbance": {
+      "noctrl": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 0.9999999993458679,
+          "grid_cost": 0.9999999395514245,
+          "resilience_cost": null,
+          "challenge_cost": 0.9999999694486462,
+          "cost_total": 1.0000000022452296,
+          "electricity_consumption_total": 1.0
+        },
+        "board": {
+          "total_consumption_kwh": 856.572,
+          "power_cost_usd": 154.183,
+          "carbon_emission_kgco2": 359.76,
+          "peak_load_kw": 63.294,
+          "cumulative_reward": -1019.655
+        },
+        "sarbc_kind": null,
+        "step_time_mean_s": 0.01,
+        "loads": [
+          18.37,
+          20.76,
+          17.95,
+          17.03,
+          20.17,
+          60.17,
+          63.29,
+          57.59,
+          51.31,
+          50.46,
+          10.15,
+          14.09,
+          17.49,
+          11.85,
+          4.9,
+          14.28,
+          23.79,
+          27.83,
+          31.61,
+          32.79,
+          39.57,
+          32.39,
+          32.17,
+          29.09,
+          28.26,
+          23.8,
+          20.9,
+          25.78,
+          27.82,
+          30.9
+        ],
+        "steps": 30,
+        "resilience": {
+          "shock_peak_kw": 63.29,
+          "shock_total_excess_kwh": 179.01,
+          "pre_shock_peak_kw": 20.76,
+          "recovery_steps": 1
+        },
+        "wall_s": 1.5
+      },
+      "sarbc": {
+        "kpis": {
+          "comfort_cost": null,
+          "emissions_cost": 0.9893330969139397,
+          "grid_cost": 1.0258845316020095,
+          "resilience_cost": null,
+          "challenge_cost": 1.0076088142579747,
+          "cost_total": 0.9597255220709703,
+          "electricity_consumption_total": 0.982631685004352
+        },
+        "board": {
+          "total_consumption_kwh": 841.983,
+          "power_cost_usd": 151.557,
+          "carbon_emission_kgco2": 353.633,
+          "peak_load_kw": 63.294,
+          "cumulative_reward": -1001.937
+        },
+        "sarbc_kind": "sacrbc_trained",
+        "step_time_mean_s": 0.01,
+        "loads": [
+          1.47,
+          11.06,
+          17.74,
+          17.03,
+          20.17,
+          60.17,
+          63.29,
+          58.82,
+          52.82,
+          50.43,
+          16.43,
+          15.29,
+          21.24,
+          17.61,
+          15.51,
+          15.1,
+          22.22,
+          19.56,
+          27.91,
+          28.97,
+          37.65,
+          32.39,
+          32.17,
+          29.09,
+          30.37,
+          22.09,
+          20.85,
+          25.78,
+          27.82,
+          30.9
+        ],
+        "steps": 30,
+        "resilience": {
+          "shock_peak_kw": 63.29,
+          "shock_total_excess_kwh": 184.67,
+          "pre_shock_peak_kw": 20.17,
+          "recovery_steps": 1
+        },
+        "wall_s": 2.6
       }
     }
   }
