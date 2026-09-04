@@ -79,9 +79,15 @@ cd MeshBoard
 ./init.sh
 ```
 
-`./init.sh` 하나가 전부를 처리합니다 — `backend/.env` 생성, PostgreSQL 기동, 잠긴 의존성 설치,
-마이그레이션, **backend 테스트 123개**, frontend lint/build/audit, 그리고 스택이 실제로
-붙어서 동작하는지 확인하는 end-to-end 검증까지 순서대로 실행합니다.
+`./init.sh` 하나가 **환경 준비와 검증**을 전부 처리합니다 — `backend/.env` 생성, PostgreSQL 기동,
+잠긴 의존성 설치, 마이그레이션, **backend 테스트 123개**, frontend lint/build/audit, 그리고 스택이
+실제로 붙어서 동작하는지 확인하는 end-to-end 검증까지 순서대로 실행합니다.
+
+**서버는 띄우지 않습니다.** 플랫폼을 브라우저에서 조작하려면 `RUN_APP=1` 을 붙이세요.
+
+```bash
+SEED_DB=1 RUN_APP=1 ./init.sh
+```
 
 | 변형 | 하는 일 |
 |---|---|

@@ -181,3 +181,22 @@ if [ "${RUN_APP:-0}" = "1" ]; then
 fi
 
 echo "==> MeshBoard initialization completed"
+
+# RUN_APP 없이 끝난 경우, 실제로 플랫폼을 열어보는 방법을 알려준다.
+# init.sh 는 "환경 준비 + 검증"까지만 하고 서버는 띄우지 않는다.
+if [ "${RUN_APP:-0}" != "1" ]; then
+  cat <<'HINT'
+
+    플랫폼을 실제로 띄우려면:
+
+      SEED_DB=1 RUN_APP=1 ./init.sh      # 데모 데이터 + backend/frontend 실행
+
+    또는 터미널 두 개로 나눠서:
+
+      cd backend  && uv run uvicorn app.main:app --reload --port 8000
+      cd frontend && npm run dev
+
+      Frontend  http://localhost:5173     데모 계정  admin@meshboard.io / admin1234
+      Swagger   http://localhost:8000/docs
+HINT
+fi
