@@ -99,6 +99,7 @@ async def run_rollout(env, mode: str, db, agents, n_steps: int,
         )
 
     nb = len(env.buildings)
+    llm_used = llm_fallback = 0
     for step in range(n_steps):
         t0 = time.time()
         di = eh._decision_index(env)
@@ -126,6 +127,9 @@ async def run_rollout(env, mode: str, db, agents, n_steps: int,
                 max_rounds=2, use_llm_proposers=True,
             )
             actions = eh.plan_to_actions(env, res.merged_plan.actions)
+            stats = getattr(res, "proposer_stats", None) or {}
+            llm_used += stats.get("llm", 0)
+            llm_fallback += stats.get("fallback", 0)
             last = res.rounds[-1] if res.rounds else None
             mf = last.mean_field if last else None
             stddev = mf.stddev_action if mf else 0.0
@@ -187,6 +191,13 @@ async def run_rollout(env, mode: str, db, agents, n_steps: int,
         }
     if strategy_notes:
         out["final_strategy_note"] = strategy_notes[-1]
+    if llm_used or llm_fallback:
+        total = llm_used + llm_fallback
+        out["llm_proposals"] = {
+            "llm": llm_used,
+            "heuristic_fallback": llm_fallback,
+            "llm_ratio": round(llm_used / total, 3) if total else 0.0,
+        }
     return out
 
 

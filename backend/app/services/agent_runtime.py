@@ -292,20 +292,38 @@ def _create_completion(client: OpenAI, model_name: str, messages: List[Dict[str,
     최신 이름을 먼저 시도하고, 서버가 거부하면 legacy 이름으로 한 번 재시도합니다.
     """
     limit = int(settings.LLM_MAX_OUTPUT_TOKENS)
-    try:
-        return client.chat.completions.create(
-            model=model_name, messages=messages, max_completion_tokens=limit
-        )
-    except TypeError:
-        # 설치된 SDK가 해당 인자를 모르는 경우.
-        pass
-    except Exception as exc:  # noqa: BLE001 — 서버가 파라미터를 거부한 경우만 폴백한다.
-        if "max_completion_tokens" not in str(exc):
-            raise
-        logger.debug("Server rejected max_completion_tokens; retrying with max_tokens")
-    return client.chat.completions.create(
-        model=model_name, messages=messages, max_tokens=limit
-    )
+    extra = {}
+    effort = settings.LLM_REASONING_EFFORT.strip()
+    if effort:
+        extra["reasoning_effort"] = effort
+
+    attempts = [
+        {"max_completion_tokens": limit, **extra},
+        {"max_tokens": limit, **extra},
+    ]
+    # reasoning_effort 를 모르는 서버도 있으므로 마지막에는 빼고 한 번 더 시도한다.
+    if extra:
+        attempts.append({"max_tokens": limit})
+
+    last_error: Exception | None = None
+    for index, kwargs in enumerate(attempts):
+        try:
+            return client.chat.completions.create(
+                model=model_name, messages=messages, **kwargs
+            )
+        except TypeError as exc:  # 설치된 SDK 가 해당 인자를 모르는 경우.
+            last_error = exc
+        except Exception as exc:  # noqa: BLE001
+            # 파라미터 거부로 보이지 않으면 그대로 올린다. 마지막 시도도 마찬가지.
+            message = str(exc)
+            rejected = any(
+                key in message for key in ("max_completion_tokens", "max_tokens", "reasoning_effort")
+            )
+            if not rejected or index == len(attempts) - 1:
+                raise
+            logger.debug("Retrying completion without rejected parameters: %s", message[:200])
+            last_error = exc
+    raise last_error  # pragma: no cover — attempts 는 항상 비어있지 않다.
 
 
 def _usage_tokens(completion: Any) -> tuple[int, int]:

@@ -34,6 +34,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.agent import Agent
 from app.schemas.citylearn_grid_agent import (
     AgentMeshMode,
@@ -83,7 +84,7 @@ BUILDING_AGENT_NAME = "Building Battery Agent"
 
 # Building proposal LLM call의 timeout. 17개 병렬이라 한 building이 느리면 전체가 지연되므로
 # Grid-Agent Coordinator(180s)보다 짧게.
-BUILDING_INVOKE_TIMEOUT_SECONDS = 45.0
+BUILDING_INVOKE_TIMEOUT_SECONDS = settings.MESH_BUILDING_INVOKE_TIMEOUT_SECONDS
 
 # Conflict thresholds — 규칙 기반.
 OVER_DISCHARGE_RATIO = 0.6      # round의 60% 이상이 discharge면 conflict
@@ -105,6 +106,9 @@ class MacroMeshRunResult:
     operator_summary: str
     requested_at: datetime
     forbidden_action_keys: List[str] = field(default_factory=list)
+    # LLM 제안이 몇 건이고 휴리스틱으로 몇 건 폴백됐는지. 전부 폴백된 실행을 "LLM 협상 결과"로
+    # 오인하지 않기 위해 결과에 함께 싣는다.
+    proposer_stats: dict = field(default_factory=lambda: {"llm": 0, "fallback": 0})
 
 
 # ── CoProposerClient ────────────────────────────────────────────────
@@ -117,6 +121,8 @@ class CoProposerClient:
         self.agent = agent
         self.use_llm = use_llm and agent is not None
         self.model = model
+        # LLM 제안과 휴리스틱 폴백을 센다. 전부 폴백된 실행이 정상 LLM 실행으로 보이면 안 된다.
+        self.stats = {"llm": 0, "fallback": 0}
 
     async def propose(
         self,
@@ -132,12 +138,20 @@ class CoProposerClient:
             try:
                 proposal = await asyncio.wait_for(
                     self._invoke_llm(asset, round_index, mean_field, conflicts, forbidden_action_keys, district_load),
-                    timeout=BUILDING_INVOKE_TIMEOUT_SECONDS,
+                    timeout=settings.MESH_BUILDING_INVOKE_TIMEOUT_SECONDS,
                 )
                 if proposal is not None:
+                    self.stats["llm"] += 1
                     return proposal
+                self.stats["fallback"] += 1
             except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
-                logger.warning("CoProposer LLM failed for %s: %s", asset.building_id, exc)
+                # 예외 타입을 남기지 않으면 TimeoutError(메시지가 빈 문자열)와 다른 실패를
+                # 구분할 수 없어, LLM 이 통째로 폴백된 실행을 정상 실행으로 오인하게 된다.
+                self.stats["fallback"] += 1
+                logger.warning(
+                    "CoProposer LLM failed for %s: %s: %s",
+                    asset.building_id, type(exc).__name__, exc or "(no message)",
+                )
 
         return _heuristic_propose(asset, round_index, mean_field, conflicts, forbidden_action_keys, district_load)
 
@@ -601,6 +615,7 @@ async def run_macro_mesh_negotiation(
         operator_summary=operator_summary,
         requested_at=datetime.now(timezone.utc),
         forbidden_action_keys=list(validation.forbidden_action_keys),
+        proposer_stats=dict(proposer.stats),
     )
 
 

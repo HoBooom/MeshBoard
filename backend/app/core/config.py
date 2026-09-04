@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "qwen3:8b"
     LLM_TIMEOUT_SECONDS: float = 120.0
     LLM_MAX_OUTPUT_TOKENS: int = 4096
+    # 추론(thinking) 토큰 예산. Qwen3 같은 하이브리드 추론 모델은 기본적으로 보이지 않는
+    # thinking 토큰을 수백~수천 개 생성하며, 이 프로젝트의 에이전트는 짧은 JSON 한 줄만
+    # 내면 되므로 그 비용이 그대로 낭비된다(실측: 12토큰 답을 위해 1,666토큰 생성).
+    # "none" 이면 끄고, 빈 문자열이면 파라미터 자체를 보내지 않는다(구형 서버 호환).
+    LLM_REASONING_EFFORT: str = "none"
     # 모델명을 그대로 전달할지 여부. Ollama는 "qwen2.5:7b" 처럼 provider 접두가 없고,
     # OpenRouter 계열 게이트웨이는 "openai/gpt-4o" 처럼 접두를 요구한다.
     # JSON 객체로 별칭을 정의하면 호출 시 치환된다. 예: {"fast":"qwen2.5:3b"}
@@ -142,6 +147,12 @@ class Settings(BaseSettings):
     # HTTP timeout 이 먼저 나고 broker 취소는 최후의 안전망이 되도록 한다.
     AGENT_INVOKE_TIMEOUT_SECONDS: float = 180.0
     AGENT_INVOKE_MAX_CONCURRENCY: int = 4
+
+    # ── CityLearn mesh 협상 ───────────────────────────────────
+    # 한 라운드에서 건물 수만큼(17~19) LLM 을 동시에 부른다. 호스팅 API 는 이를 진짜 병렬로
+    # 처리하지만 로컬 8B 모델은 계산 포화 상태라 사실상 순차 처리에 가깝다(실측: 호출당 ~2.6초,
+    # 17개에 ~45초). 기본값을 그 실측에 맞춰 잡는다. 빠른 백엔드를 쓰면 낮춰도 된다.
+    MESH_BUILDING_INVOKE_TIMEOUT_SECONDS: float = 180.0
 
     # ── External MCP/Tool Configuration ───────────────────────
     # JSON array. Example:
