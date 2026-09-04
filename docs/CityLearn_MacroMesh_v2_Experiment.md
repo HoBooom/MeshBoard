@@ -231,3 +231,64 @@ uv run --project backend python backend/scripts/exp_v2.py \
 ```
 - v2 컨트롤러: `backend/scripts/macro_mesh_v2.py` (StrategyProposer + rollout_revise + introspect + MacroMeshV2Controller)
 - 실험 하니스: `backend/scripts/exp_v2.py` · 원시결과: `docs/_exp_v2_checkpoint.json`
+
+---
+
+## 9. 추가 실험 — 로컬 모델 · H=30
+
+평가일: 2026-09-04 · 하니스: `backend/scripts/exp_v2.py` · 원시결과: `docs/_exp_v2_h30_checkpoint.json`
+LLM: **`qwen3:8b`** (로컬 Ollama, thinking 비활성) · 총 소요 2.7시간
+
+> **§4 표와 같은 표에 넣어 비교하면 안 된다.** §4 는 `anthropic/claude-sonnet-4-6` 로,
+> 이 절은 로컬 `qwen3:8b` 로 낸 결과다. horizon 뿐 아니라 모델이 다른 별개 실험이다.
+
+### 조건
+
+`start=4200` · `H=30` · 초기 SOC=0.5 · 17빌딩 · 정상 시나리오만.
+플랫폼을 유료 API 없이 로컬 모델만으로 돌릴 수 있는지, 그리고 §5.2 의 "모듈이 없으면 조정이
+무너진다"가 더 긴 horizon 에서도 나타나는지를 본다.
+
+### 결과
+
+| 모드 | 소비(kWh) | 피크(kW) | Reward | KPI chal | 합의도 | action수 |
+|---|---:|---:|---:|---:|---:|---:|
+| noctrl | 672.9 | 39.6 | -788.9 | 1.000 | – | – |
+| sarbc | 658.3 | 37.7 | -771.0 | 1.008 | – | – |
+| macro_v1 | 746.9 | **68.9** | -884.7 | 2.238 | 0.425 | 15.33 |
+| **macro_v2** | **647.7** | 39.6 | **-758.0** | 1.068 | 0.323 | **1.0** |
+
+무제어 대비 소비 **개선율**(양수가 좋음): sarbc +2.2% · macro_v1 **−11.0%** · macro_v2 +3.8%
+· **v1 대비 v2 +13.3%**
+
+### 해석
+
+1. **v1 이 무제어보다 무너진다.** 소비가 11.0% 늘고, 피크는 39.6→68.9kW
+   (+74%). 협상 품질이 원인을 그대로 보여준다 — 매 스텝 15.33개 빌딩이
+   움직이는데 합의도는 0.425 에 그친다. 조정 없이 같은 방향으로 몰려 스스로 피크를 만들었다.
+   §4 의 building_add(17→19빌딩)에서 나타났던 붕괴가, 빌딩 수를 늘리지 않아도 horizon 을 늘리면
+   정상 조건에서 재현된다.
+
+2. **v2 는 붕괴를 막는다.** action 을 스텝당 1.0개로 줄여(rollout 검증의 가지치기) 피크를
+   무제어와 동일한 39.6kW 로 유지했다. v1 대비 소비 13.3% 우위.
+
+3. **다만 v2 의 절대 이득은 작다.** 무제어 대비 +3.8% 이고 피크는 동일하며,
+   challenge KPI 는 1.068 로 오히려 근소하게 나쁘다. 이 결과가 뒷받침하는 주장은
+   "v2 가 최적화를 잘한다"가 아니라 **"모듈이 없으면 조정이 무너지고, 있으면 무너지지 않는다"** 다.
+
+### 측정 신뢰도
+
+- macro_v1 은 제안 1,020건 중 994건이 LLM, 26건이 휴리스틱 폴백(**llm_ratio 0.975**).
+  폴백 원인은 타임아웃이 아니라 모델이 응답 프로토콜을 벗어나 파싱에 실패한 경우다.
+- macro_v2 는 이 실행 시점에 계측이 v1 경로에만 연결돼 있어 **llm_ratio 미측정**이다.
+  실행 로그상 타임아웃 경고는 0건이지만 파싱 실패 건수는 알 수 없다. 이후 실행부터는 양쪽 모두 기록된다.
+
+### 재현
+
+```bash
+uv run --project backend python backend/scripts/exp_v2.py \
+  --start 4200 --horizon 30 --soc 0.5 \
+  --exps normal --modes noctrl,sarbc,macro_v1,macro_v2 \
+  --ckpt docs/_exp_v2_h30_checkpoint.json
+```
+
+로컬 8B 모델 기준 macro 모드는 스텝당 약 150초(17빌딩 × 2라운드)가 걸린다.

@@ -2,15 +2,21 @@
 
 > 조직 안의 AI 에이전트를 등록하고, 워크스페이스에 배치하고, 메시지·목표·정책·실행 상태를 한 화면에서 관리하는 Agent Mesh 운영 프로토타입
 
-**Portfolio Release v1.0.0** · 설계 의도, 핵심 시연 흐름과 기술적 판단은 [`docs/portfolio-guide.md`](./docs/portfolio-guide.md)에 정리했습니다.
-
 [![CI](https://github.com/HoBooom/MeshBoard/actions/workflows/ci.yml/badge.svg)](https://github.com/HoBooom/MeshBoard/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-## 프로젝트 범위
+## 무엇을 푸는가
 
-MeshBoard는 단일 챗봇이 아니라 여러 에이전트가 함께 일하는 환경을 운영하기 위한 포트폴리오 MVP입니다. 에이전트 등록부터 워크스페이스 배치, 메시지 라우팅, LangGraph 실행, 목표 단위 협업 관찰까지 하나의 흐름으로 연결합니다.
+에이전트가 하나일 때는 프롬프트와 로그만 있으면 됩니다. 여러 개가 함께 일하기 시작하면 다른 질문이 생깁니다.
 
-현재 검증된 핵심 범위는 다음과 같습니다.
+- 들어온 요청을 **어떤 에이전트가** 받아야 하는가
+- 실행 가능한 도구와 민감정보 정책을 **누가 강제**하는가
+- 여러 에이전트의 위임과 실패를 **어떻게 추적**하는가
+- 운영에 반영하기 전에 시나리오를 **어떻게 안전하게 검증**하는가
+
+MeshBoard는 이 네 가지를 Registry · Workspace · Message Broker · Trust · Operations · Sandbox 라는 경계로 나눠 구현한 Agent Mesh 운영 플랫폼입니다. 설계 배경과 판단 근거는 [`docs/design-notes.md`](./docs/design-notes.md)에 정리했습니다.
+
+## 기능
 
 - JWT/RBAC 기반 사용자·역할 관리
 - 에이전트 메타데이터, 도구 allow-list, 구독 규칙 관리
@@ -27,7 +33,14 @@ MeshBoard는 단일 챗봇이 아니라 여러 에이전트가 함께 일하는 
 - 보존 기간 기반 불변 감사 아카이브와 HMAC 서명 보안 웹훅
 - interaction schema v1→v2 하위 호환 어댑터
 
-durable checkpoint, 독립 worker queue, SSE/WebSocket과 실제 기업 IdP 연동은 운영 확장 범위이며 아직 구현 완료로 주장하지 않습니다. 세부 상태는 [`feature_list.json`](./feature_list.json)을 기준으로 합니다.
+### 범위 밖
+
+다음은 의도적으로 구현하지 않았습니다. 기능 단위 상태는 [`feature_list.json`](./feature_list.json)에 있습니다.
+
+- 프로세스 재시작을 견디는 durable LangGraph checkpointer (현재는 프로세스 메모리)
+- Kafka/SQS 같은 독립 worker queue와 재시도·DLQ (현재는 요청 내 bounded fan-out)
+- SSE/WebSocket 실시간 스트리밍
+- 기업 IdP(OIDC) 연동 — 인증은 자체 JWT/RBAC 만 제공합니다
 
 ## 아키텍처
 
@@ -192,6 +205,10 @@ uv run --project backend python backend/scripts/verify_local_stack.py
 낮은 소비를 유지했습니다. v1은 오히려 무제어보다 악화(314.9 > 287.6)돼 에이전트 증가 시 조정이
 무너졌고, v2의 rollout 검증과 Introspector가 이를 막았습니다.
 
+로컬 모델(`qwen3:8b`)로 H=30 까지 늘려 재실행한 결과는 같은 문서 §9 에 있습니다. 거기서는
+v1 이 무제어보다 소비 11% 악화·피크 74% 급등으로 무너지고, v2 가 action 을 스텝당 1개로 줄여
+그 붕괴를 막습니다 — 다만 v2 의 무제어 대비 이득 자체는 3.8% 로 작습니다.
+
 > **지표 주의**: 위 개선은 단지 소비·피크·Reward 기준입니다. CityLearn 공식 challenge KPI는 ramping
 > 평활성을 중시하므로 v2의 공격적 방전과 상충하며, 정상 시나리오에서는 v2가 baseline보다 높습니다
 > (1.190 vs 1.000). 이 텐션은 실험 문서 §5에 그대로 기록했습니다.
@@ -220,7 +237,7 @@ backend/
 frontend/
   src/api/             typed API clients
   src/pages/           dashboard workbenches
-docs/                  experiments and operating notes
+docs/                  설계 노트, 실험 보고서, 원시 결과
 research/              reproducible research notebooks
 CityLearn_old_system/  pinned CityLearn runtime + 실제 사용하는 데이터셋 9개만 유지
 Final_mesh1-main/      CHESCA experiment runtime + 집계 결과(요약 CSV)

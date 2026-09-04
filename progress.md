@@ -14,7 +14,7 @@
 
 ### Session 011
 - **Date**: 2026-09-03
-- **Goal**: 원래 Agent Mesh 설계에 맞춘 포트폴리오 v1.0 완성 및 브랜치 정리
+- **Goal**: 원래 Agent Mesh 설계에 맞춘 v1.0 완성 및 브랜치 정리
 - **Completed**:
   - 운영 메시지/Interaction과 분리된 `SANDBOX` 워크스페이스, 결정론적 라우팅·handoff 시뮬레이터, 실행 로그 API/UI 구현
   - 정책 JSON 검증과 ACTIVE-only 연결, 차단어·입력 길이·필수 인증·PII·도구 범위의 direct/broker 런타임 강제 적용
@@ -27,7 +27,7 @@
   - interaction schema v1→v2 read adapter 및 unknown major fail-closed 구현
   - 기존 DB의 `creator`/코드의 `developer` workspace role drift를 데이터 보존형 Alembic `015_member_role`로 정규화
   - 저장만 되던 메시지 `target_ids`/`target_roles`를 실제 라우팅 우선순위에 연결
-  - backend/frontend 버전을 `1.0.0`으로 맞추고 README, backend architecture, portfolio demo guide 갱신
+  - backend/frontend 버전을 `1.0.0`으로 맞추고 README, backend architecture, 설계 노트 갱신
 - **Verification run**:
   - ✅ backend `python -m unittest discover -s tests -v`: 58 tests passed
   - ✅ frontend ESLint: 0 errors, 0 warnings

@@ -1,6 +1,6 @@
 # Clean State Checklist
 
-## Portfolio v1.0 체크 (2026-09-03)
+## 릴리스 체크 (2026-09-03)
 
 - [x] PostgreSQL이 healthy이고 Alembic head가 `015_member_role`이다.
 - [x] 기존 workspace member 역할이 데이터 손실 없이 `developer`로 정규화됐다.
@@ -10,7 +10,7 @@
 - [x] 정책 위반 차단, 런타임 Suspend/Activate, explicit target receipt, execution tree 조회가 실제 API에서 검증됐다.
 - [x] Archive UPDATE/DELETE 방지 trigger가 enabled 상태다.
 - [x] `feature_list.json`의 18개 기능이 모두 passing이며 근거가 기록됐다.
-- [x] README, architecture, portfolio guide와 progress log가 현재 구현을 설명한다.
+- [x] README, architecture, 설계 노트, progress log가 현재 구현을 설명한다.
 - [x] `.nvmrc`/`.node-version`과 CI가 Node 22.13 기준을 고정한다.
 - [x] `node_modules`, `dist`, bytecode, `.env`는 Git 추적 대상이 아니다.
 - [x] 로컬 RunYour credit 부족은 코드 결함과 구분해 `progress.md`에 기록했다.
