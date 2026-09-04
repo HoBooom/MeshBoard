@@ -13,15 +13,61 @@ require_command() {
 }
 
 require_command uv
-require_command npm
-require_command node
 
-node_major="$(node --version | sed -E 's/^v([0-9]+).*/\1/')"
-node_minor="$(node --version | sed -E 's/^v[0-9]+\.([0-9]+).*/\1/')"
-if [ "$node_major" -lt 22 ] || { [ "$node_major" -eq 22 ] && [ "$node_minor" -lt 13 ]; }; then
-  echo "ERROR: Node.js 22.13+가 필요합니다 (현재: $(node --version))." >&2
-  exit 1
+# ── Node.js ────────────────────────────────────────────────────────────────
+# frontend(Vite 8)는 Node 22.13+ 를 요구한다. 셸 기본 버전이 낮더라도 버전 매니저가 있으면
+# `.nvmrc` 에 적힌 버전을 이 스크립트 안에서만 활성화한다 — 사용자 셸 설정은 건드리지 않는다.
+NODE_MIN_MAJOR=22
+NODE_MIN_MINOR=13
+
+node_version_ok() {
+  command -v node >/dev/null 2>&1 || return 1
+  local version major minor
+  version="$(node --version 2>/dev/null)" || return 1
+  major="${version#v}"; major="${major%%.*}"
+  minor="${version#v*.}"; minor="${minor%%.*}"
+  case "$major$minor" in *[!0-9]*) return 1 ;; esac
+  [ "$major" -gt "$NODE_MIN_MAJOR" ] && return 0
+  [ "$major" -eq "$NODE_MIN_MAJOR" ] && [ "$minor" -ge "$NODE_MIN_MINOR" ]
+}
+
+activate_node_with_fnm() {
+  command -v fnm >/dev/null 2>&1 || return 1
+  eval "$(fnm env)" >/dev/null 2>&1 || return 1
+  fnm use --install-if-missing >/dev/null 2>&1
+}
+
+activate_node_with_nvm() {
+  local nvm_sh="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
+  [ -s "$nvm_sh" ] || return 1
+  # nvm.sh 는 `set -u` 환경에서 unbound variable 로 죽는다.
+  set +u
+  # shellcheck disable=SC1090
+  . "$nvm_sh" >/dev/null 2>&1 || { set -u; return 1; }
+  if ! nvm use >/dev/null 2>&1; then
+    echo "==> Installing Node $(cat .nvmrc) via nvm"
+    nvm install >/dev/null 2>&1 || true
+    nvm use >/dev/null 2>&1 || true
+  fi
+  set -u
+  node_version_ok
+}
+
+if ! node_version_ok; then
+  current="$(command -v node >/dev/null 2>&1 && node --version || echo '없음')"
+  activate_node_with_fnm >/dev/null 2>&1 || activate_node_with_nvm >/dev/null 2>&1 || true
+  if node_version_ok; then
+    echo "==> Node $(node --version) activated from .nvmrc (셸 기본: $current)"
+  else
+    echo "ERROR: Node.js ${NODE_MIN_MAJOR}.${NODE_MIN_MINOR}+ 가 필요합니다 (현재: $current)." >&2
+    echo "       nvm 사용 시: nvm install && nvm use" >&2
+    echo "       또는 https://nodejs.org 에서 $(cat .nvmrc) 이상을 설치하세요." >&2
+    exit 1
+  fi
 fi
+
+require_command node
+require_command npm
 
 echo "==> Working directory: $PWD"
 
@@ -99,7 +145,13 @@ if [ "${SKIP_VERIFY:-0}" != "1" ]; then
   echo "==> [5/5] Frontend quality gates"
   (cd frontend && npm run lint)
   (cd frontend && npm run build)
-  (cd frontend && npm audit --audit-level=high)
+
+  # npm audit 은 외부 레지스트리에 의존한다. 레지스트리 장애(503)로 셋업 전체가 실패하면
+  # 안 되므로 결과만 알리고 진행한다. 강제 게이트가 필요하면 CI 에서 별도로 돌린다.
+  if ! (cd frontend && npm audit --audit-level=high); then
+    echo "    WARNING: npm audit 이 통과하지 못했습니다 (취약점 또는 레지스트리 오류)." >&2
+    echo "             'cd frontend && npm audit' 로 직접 확인하세요." >&2
+  fi
 
   # 스택이 실제로 붙어서 동작하는지까지 확인한다. DB 변경은 스크립트가 롤백한다.
   if [ "${SKIP_DB:-0}" != "1" ]; then

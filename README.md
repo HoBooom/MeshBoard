@@ -67,7 +67,7 @@ FastAPI API ─────────────── PostgreSQL + pgvector 
 
 - Docker Desktop
 - Python 3.11 이상과 [uv](https://docs.astral.sh/uv/)
-- Node.js 22.13 이상 (`.nvmrc` 제공 — `nvm use`)
+- Node.js 22.13 이상 — 셸 기본 버전이 낮아도 `nvm`/`fnm` 이 있으면 `./init.sh` 가 `.nvmrc` 버전을 스크립트 안에서만 활성화합니다(셸 설정은 건드리지 않음)
 - [Ollama](https://ollama.com/download) + `ollama pull qwen3:8b` — 에이전트 실행용 **로컬** 모델
 
 > 에이전트 실행은 기본적으로 로컬 모델만 사용합니다. **API 키가 필요 없고 유료 호출도 발생하지 않습니다.**
@@ -92,7 +92,8 @@ cd MeshBoard
 | `SKIP_VERIFY=1 ./init.sh` | 검증을 건너뛰고 환경만 준비합니다 |
 
 Ollama나 Docker가 없어도 중단되지 않습니다. 쓸 수 없는 검증은 이유를 출력하고 건너뜁니다
-(통합 테스트는 DB가 없으면 스스로 skip합니다).
+(통합 테스트는 DB가 없으면 스스로 skip합니다). `npm audit` 은 레지스트리 장애로 셋업 전체가
+막히지 않도록 결과만 알리고 진행합니다.
 
 ### 수동 실행
 
